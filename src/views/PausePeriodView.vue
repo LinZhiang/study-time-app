@@ -25,6 +25,11 @@ function refresh() {
   periods.value = listPausePeriods()
 }
 
+function isPeriodActive(period: PausePeriod) {
+  const today = getTodayKey()
+  return period.startDate <= today && period.endDate >= today
+}
+
 function submitPeriod() {
   formError.value = ''
   const payload =
@@ -51,98 +56,114 @@ function deletePeriod(id: string) {
 
 <template>
   <div class="page pause-page">
-    <section v-if="todayPaused" class="card pause-page__today card--accent">
-      <p class="pause-page__today-title">今天处于休整日</p>
-      <p class="pause-page__today-desc">今日不计统计、不播放提醒、不发送通知。</p>
+    <section v-if="todayPaused" class="pause-hero pause-hero--active">
+      <div class="pause-hero__icon" aria-hidden="true">⏸</div>
+      <div>
+        <p class="pause-hero__title">今天处于休整日</p>
+        <p class="pause-hero__desc">不计统计、不播放提醒、不发送通知</p>
+      </div>
     </section>
 
-    <section class="card pause-page__intro">
-      <h2 class="pause-page__section-title">休整日说明</h2>
-      <p class="pause-page__intro-text">
-        指定某一天或连续几天为休整日。这些日期内系统将暂停番茄统计、日常星级、日志记录、音效提醒与后台通知。
-      </p>
+    <section v-else class="pause-hero card">
+      <div class="pause-hero__icon pause-hero__icon--muted" aria-hidden="true">⏸</div>
+      <div>
+        <p class="pause-hero__title">休整日</p>
+        <p class="pause-hero__desc">
+          外出或调整作息时，可暂停番茄统计、星级结算、日志与提醒，不影响其它天的数据。
+        </p>
+      </div>
     </section>
 
-    <section class="card pause-page__form">
-      <h2 class="pause-page__section-title">添加休整日</h2>
+    <section class="card pause-form">
+      <div class="section-block__header">
+        <h2 class="section-block__title">添加安排</h2>
+      </div>
 
-      <div class="pause-page__mode">
+      <div class="pause-form__mode" role="tablist" aria-label="休整日类型">
         <button
-          class="btn btn--ghost btn--small"
-          :class="{ 'btn--primary': mode === 'single' }"
+          class="chip"
+          :class="{ 'chip--active': mode === 'single' }"
           type="button"
+          role="tab"
+          :aria-selected="mode === 'single'"
           @click="mode = 'single'"
         >
           单日
         </button>
         <button
-          class="btn btn--ghost btn--small"
-          :class="{ 'btn--primary': mode === 'range' }"
+          class="chip"
+          :class="{ 'chip--active': mode === 'range' }"
           type="button"
+          role="tab"
+          :aria-selected="mode === 'range'"
           @click="mode = 'range'"
         >
           日期段
         </button>
       </div>
 
-      <div v-if="mode === 'single'" class="pause-page__field">
-        <label class="pause-page__label" for="single-date">选择日期</label>
-        <input id="single-date" v-model="singleDate" class="pause-page__input" type="date" />
+      <div v-if="mode === 'single'" class="pause-form__field">
+        <label class="pause-form__label" for="single-date">选择日期</label>
+        <input id="single-date" v-model="singleDate" class="pause-form__input" type="date" />
       </div>
 
-      <div v-else class="pause-page__range">
-        <div class="pause-page__field">
-          <label class="pause-page__label" for="start-date">开始日期</label>
-          <input id="start-date" v-model="startDate" class="pause-page__input" type="date" />
+      <div v-else class="pause-form__range">
+        <div class="pause-form__field">
+          <label class="pause-form__label" for="start-date">开始</label>
+          <input id="start-date" v-model="startDate" class="pause-form__input" type="date" />
         </div>
-        <div class="pause-page__field">
-          <label class="pause-page__label" for="end-date">结束日期</label>
-          <input id="end-date" v-model="endDate" class="pause-page__input" type="date" />
+        <span class="pause-form__range-sep">至</span>
+        <div class="pause-form__field">
+          <label class="pause-form__label" for="end-date">结束</label>
+          <input id="end-date" v-model="endDate" class="pause-form__input" type="date" />
         </div>
       </div>
 
-      <div class="pause-page__field">
-        <label class="pause-page__label" for="pause-note">备注（可选）</label>
+      <div class="pause-form__field">
+        <label class="pause-form__label" for="pause-note">备注（可选）</label>
         <input
           id="pause-note"
           v-model="note"
-          class="pause-page__input"
+          class="pause-form__input"
           type="text"
           maxlength="40"
           placeholder="例如：外出旅行"
         />
       </div>
 
-      <p v-if="formError" class="pause-page__error">{{ formError }}</p>
+      <p v-if="formError" class="pause-form__error">{{ formError }}</p>
 
-      <button class="btn btn--primary" type="button" @click="submitPeriod">添加</button>
+      <button class="btn btn--primary btn--large pause-form__submit" type="button" @click="submitPeriod">
+        添加休整日
+      </button>
     </section>
 
-    <section class="card pause-page__list">
-      <h2 class="pause-page__section-title">已安排的休整日</h2>
+    <section class="pause-list">
+      <div class="section-block__header">
+        <h2 class="section-block__title">已安排</h2>
+        <span class="section-block__meta">{{ periods.length }} 条</span>
+      </div>
 
-      <p v-if="periods.length === 0" class="pause-page__empty">还没有安排休整日。</p>
+      <p v-if="periods.length === 0" class="empty-hint">还没有休整日安排，可在上方添加。</p>
 
-      <ul v-else class="pause-page__items">
-        <li v-for="period in periods" :key="period.id" class="pause-page__item">
-          <div class="pause-page__item-main">
-            <p class="pause-page__item-title">{{ formatPausePeriodLabel(period) }}</p>
-            <p class="pause-page__item-meta">
+      <ul v-else class="pause-list__items">
+        <li
+          v-for="period in periods"
+          :key="period.id"
+          class="card pause-list__item"
+          :class="{ 'pause-list__item--active': isPeriodActive(period) }"
+        >
+          <div class="pause-list__item-body">
+            <div class="pause-list__item-head">
+              <p class="pause-list__item-title">{{ formatPausePeriodLabel(period) }}</p>
+              <span v-if="isPeriodActive(period)" class="pause-list__badge">进行中</span>
+            </div>
+            <p class="pause-list__item-meta">
               共 {{ countDaysInPeriod(period) }} 天
-              <span v-if="period.note"> · {{ period.note }}</span>
-            </p>
-            <p
-              v-if="period.startDate <= getTodayKey() && period.endDate >= getTodayKey()"
-              class="pause-page__item-active"
-            >
-              进行中
+              <template v-if="period.note"> · {{ period.note }}</template>
             </p>
           </div>
-          <button
-            class="btn btn--ghost btn--small pause-page__delete"
-            type="button"
-            @click="deletePeriod(period.id)"
-          >
+          <button class="text-btn pause-list__delete" type="button" @click="deletePeriod(period.id)">
             删除
           </button>
         </li>
@@ -155,75 +176,134 @@ function deletePeriod(id: string) {
 .pause-page {
   display: flex;
   flex-direction: column;
+  gap: 16px;
+  padding-bottom: 24px;
+}
+
+.pause-hero {
+  display: flex;
+  align-items: flex-start;
   gap: 14px;
+  padding: 18px 20px;
 }
 
-.pause-page__section-title {
-  margin: 0 0 12px;
-  font-size: 16px;
-  font-weight: 600;
+.pause-hero--active {
+  background: linear-gradient(135deg, #e8f3f0 0%, #f4faf8 100%);
+  border: 1px solid #b8ddd4;
+  border-radius: var(--radius-lg);
 }
 
-.pause-page__today {
-  background: #fff7ed;
-  border: 1px solid #fed7aa;
+.pause-hero__icon {
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 14px;
+  background: var(--color-primary);
+  color: #fff;
+  font-size: 18px;
+  line-height: 1;
 }
 
-.pause-page__today-title {
+.pause-hero__icon--muted {
+  background: var(--color-primary-light);
+  color: var(--color-primary);
+}
+
+.pause-hero__title {
   margin: 0 0 6px;
-  font-size: 15px;
+  font-size: 17px;
   font-weight: 600;
-  color: #c45c26;
+  color: var(--color-text);
 }
 
-.pause-page__today-desc,
-.pause-page__intro-text,
-.pause-page__empty {
+.pause-hero__desc {
   margin: 0;
   font-size: 13px;
   line-height: 1.6;
   color: var(--color-text-secondary);
 }
 
-.pause-page__mode {
+.pause-form {
+  padding: 20px;
+}
+
+.pause-form__mode {
   display: flex;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.pause-form__field {
+  display: flex;
+  flex-direction: column;
   gap: 8px;
   margin-bottom: 14px;
 }
 
-.pause-page__field {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-bottom: 12px;
-}
-
-.pause-page__range {
+.pause-form__range {
   display: grid;
-  gap: 0;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 10px;
+  align-items: end;
+  margin-bottom: 4px;
 }
 
-.pause-page__label {
+.pause-form__range-sep {
+  padding-bottom: 12px;
   font-size: 13px;
+  color: var(--color-text-tertiary);
+}
+
+.pause-form__label {
+  font-size: 13px;
+  font-weight: 500;
   color: var(--color-text-secondary);
 }
 
-.pause-page__input {
+.pause-form__input {
   width: 100%;
-  padding: 10px 12px;
+  padding: 12px 14px;
   border: 1px solid var(--color-border);
-  border-radius: 10px;
+  border-radius: 12px;
   font: inherit;
-  background: #fff;
+  font-size: 15px;
+  color: var(--color-text);
+  background: var(--color-bg);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
-.pause-page__error {
+.pause-form__input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgb(26 107 92 / 12%);
+}
+
+.pause-form__error {
   margin: 0 0 12px;
   font-size: 13px;
   color: #c45c26;
 }
 
-.pause-page__items {
+.pause-form__submit {
+  width: 100%;
+  margin-top: 4px;
+}
+
+.empty-hint {
+  margin: 0;
+  padding: 16px 18px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--color-text-secondary);
+  background: var(--color-surface);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.pause-list__items {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -232,41 +312,58 @@ function deletePeriod(id: string) {
   gap: 10px;
 }
 
-.pause-page__item {
+.pause-list__item {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 12px 0;
-  border-bottom: 1px solid var(--color-border);
+  padding: 16px 18px;
 }
 
-.pause-page__item:last-child {
-  border-bottom: none;
-  padding-bottom: 0;
+.pause-list__item--active {
+  border-color: #b8ddd4;
+  background: linear-gradient(180deg, #fafdfc 0%, #fff 100%);
 }
 
-.pause-page__item-title {
-  margin: 0 0 4px;
-  font-size: 14px;
+.pause-list__item-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.pause-list__item-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.pause-list__badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--color-primary-light);
+  color: var(--color-primary);
+  font-size: 11px;
   font-weight: 600;
 }
 
-.pause-page__item-meta {
+.pause-list__item-meta {
   margin: 0;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--color-text-secondary);
 }
 
-.pause-page__item-active {
-  margin: 6px 0 0;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--color-primary);
-}
-
-.pause-page__delete {
+.pause-list__delete {
   flex-shrink: 0;
   color: #c45c26;
+  font-weight: 500;
+}
+
+.pause-list__delete:active {
+  opacity: 0.7;
 }
 </style>
