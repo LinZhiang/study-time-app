@@ -2,7 +2,7 @@ import type { DailyExerciseRecord, ExerciseEntry } from '../types/exercise'
 import { DAILY_EXERCISE_STORAGE_KEY } from '../types/exercise'
 import type { DayPeriod } from '../types/schedule'
 import { getTodayKey } from './scheduleStorage'
-import { shouldTrackStatistics } from './pausePeriod'
+import { shouldTrackExerciseStatistics } from './pausePeriod'
 import { formatLaborClock, formatLaborDuration } from './laborRecord'
 import { logExerciseRecord } from './activityLog'
 
@@ -50,7 +50,7 @@ export function appendExerciseEntry(input: {
   endedAt: number
   period: DayPeriod
 }) {
-  if (!shouldTrackStatistics()) return null
+  if (!shouldTrackExerciseStatistics()) return null
   const record = loadRawRecord()
   const entry: ExerciseEntry = {
     id: `${input.endedAt}-${Math.random().toString(36).slice(2, 8)}`,

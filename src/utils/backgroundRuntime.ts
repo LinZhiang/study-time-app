@@ -1,5 +1,3 @@
-import { isTodayPaused } from './pausePeriod'
-
 const STORAGE_KEY = 'background-runtime-enabled'
 
 export interface ScheduledTimerJob {
@@ -55,7 +53,7 @@ async function postToServiceWorker(data: unknown) {
 }
 
 export async function syncScheduledTimer(job: ScheduledTimerJob | null) {
-  if (!isBackgroundRuntimeEnabled() || isTodayPaused()) {
+  if (!isBackgroundRuntimeEnabled()) {
     await clearScheduledTimer()
     return
   }

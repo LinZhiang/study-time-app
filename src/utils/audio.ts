@@ -5,7 +5,6 @@
  * - 首次点击页面时预加载，之后计时器触发播放不再发起新 HTTP 请求
  */
 import { ref } from 'vue'
-import { isTodayPaused } from './pausePeriod'
 const soundFiles = {
   start: 'audio/start.dat',
   classStart: 'audio/class-start.dat',
@@ -124,7 +123,7 @@ function playKey(key: SoundKey, volume = 1) {
 }
 
 function shouldPlayAlertSounds() {
-  return !isTodayPaused()
+  return true
 }
 
 export function playModeSwitchSound() {

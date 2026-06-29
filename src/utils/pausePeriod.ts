@@ -41,8 +41,24 @@ export function isTodayPaused(): boolean {
   return isDatePaused(getTodayKey())
 }
 
-export function shouldTrackStatistics(date = getTodayKey()): boolean {
+/** 完整日程统计（劳动、星级、学习时长等） */
+export function shouldTrackFullStatistics(date = getTodayKey()): boolean {
   return !isDatePaused(date)
+}
+
+/** 兼容旧名：仅完整统计日返回 true */
+export function shouldTrackStatistics(date = getTodayKey()): boolean {
+  return shouldTrackFullStatistics(date)
+}
+
+/** 休整日仍统计番茄轮数 */
+export function shouldTrackPomodoroStatistics(): boolean {
+  return true
+}
+
+/** 休整日仍统计锻炼 */
+export function shouldTrackExerciseStatistics(): boolean {
+  return true
 }
 
 export function getPausePeriodForDate(date: string): PausePeriod | null {

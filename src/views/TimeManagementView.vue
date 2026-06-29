@@ -73,7 +73,9 @@ const isTimerRunning = computed(() => {
   <div class="page time-page">
     <section v-if="isTodayPaused()" class="card pause-day-banner">
       <p class="pause-day-banner__title">今日为休整日</p>
-      <p class="pause-day-banner__desc">不计统计、不播放提醒。可在底部「休整日」栏目调整安排。</p>
+      <p class="pause-day-banner__desc">
+        仅保留番茄学习与锻炼统计；不计劳动、星级与其它日程项。
+      </p>
     </section>
 
     <section class="daily-stats card">

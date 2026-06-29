@@ -12,7 +12,7 @@ import {
   LOGGING_START_DATE_KEY,
 } from '../types/log'
 import { getTodayKey } from './scheduleStorage'
-import { shouldTrackStatistics } from './pausePeriod'
+import { isDatePaused, shouldTrackFullStatistics } from './pausePeriod'
 
 const ACTIVITY_LABELS: Partial<Record<Activity, string>> = {
   pomodoro: '番茄学习',
@@ -59,7 +59,29 @@ export function getLoggingStartDate(): string {
 }
 
 export function shouldLogToday(): boolean {
-  return getTodayKey() >= getLoggingStartDate() && shouldTrackStatistics()
+  const today = getTodayKey()
+  if (today < getLoggingStartDate()) return false
+  return shouldTrackFullStatistics(today) || isDatePaused(today)
+}
+
+const PAUSE_DAY_LOG_TYPES: LogEventType[] = [
+  'pomodoro_study_start',
+  'pomodoro_study_end',
+  'pomodoro_rest_start',
+  'pomodoro_rest_end',
+  'pomodoro_round_complete',
+  'exercise_record',
+]
+
+function isPauseDayAllowedLogType(type: LogEventType, activity?: Activity) {
+  if (PAUSE_DAY_LOG_TYPES.includes(type)) return true
+  if (
+    (type === 'activity_start' || type === 'activity_end') &&
+    activity === 'exercise'
+  ) {
+    return true
+  }
+  return false
 }
 
 export function getLoggingStartDateLabel() {
@@ -168,12 +190,16 @@ function syncLiveSummaryFromStorage(dayLog: DayLog) {
       dayLog.summary.morningPomodoros +
       dayLog.summary.afternoonPomodoros +
       dayLog.summary.eveningPomodoros
-    dayLog.summary.studySeconds = schedule.studySeconds ?? 0
+    if (!isDatePaused(dayLog.date)) {
+      dayLog.summary.studySeconds = schedule.studySeconds ?? 0
+    }
   }
 
-  const labor = readStoredLabor()
-  if (labor?.date === dayLog.date) {
-    dayLog.summary.laborSeconds = labor.totalSeconds ?? 0
+  if (!isDatePaused(dayLog.date)) {
+    const labor = readStoredLabor()
+    if (labor?.date === dayLog.date) {
+      dayLog.summary.laborSeconds = labor.totalSeconds ?? 0
+    }
   }
 
   const exercise = readStoredExercise()
@@ -245,8 +271,9 @@ export function appendActivityLog(input: {
   if (!shouldLogToday()) return
 
   const at = input.at ?? new Date()
-  if (!shouldTrackStatistics(formatDateKey(at))) return
   const date = formatDateKey(at)
+  if (isDatePaused(date) && !isPauseDayAllowedLogType(input.type, input.activity)) return
+  if (!shouldTrackFullStatistics(date) && !isDatePaused(date)) return
   const entry: LogEntry = {
     id: createEntryId(),
     date,
@@ -394,24 +421,33 @@ export function logStudyRecordChange(input: {
 export function finalizePausedDayLog(date: string) {
   const logs = loadAllDayLogs()
   const dayLog = getOrCreateDayLog(logs, date)
-  dayLog.entries = []
+
+  const schedule = buildScheduleSnapshot(date)
+  schedule.studySeconds = 0
+  schedule.midBreakUsedSeconds = 0
+
+  const exercise = readStoredExercise()
+  const exerciseEntries = exercise?.date === date ? [...(exercise.entries ?? [])] : []
+
+  dayLog.entries = dayLog.entries.filter((entry) => isPauseDayAllowedLogType(entry.type))
   dayLog.summary = createEmptySummary()
-  dayLog.snapshot = {
+  for (const entry of dayLog.entries) {
+    updateSummaryFromEntry(dayLog.summary, entry)
+  }
+
+  const snapshot: DayLogSnapshot = {
     finalizedAt: Date.now(),
     paused: true,
-    schedule: {
-      morningPomodoros: 0,
-      afternoonPomodoros: 0,
-      eveningPomodoros: 0,
-      studySeconds: 0,
-      midBreakUsedSeconds: 0,
-    },
+    schedule,
     laborEntries: [],
-    exerciseEntries: [],
+    exerciseEntries,
     laborSeconds: 0,
-    exerciseSeconds: 0,
-    exerciseCalories: 0,
+    exerciseSeconds: exercise?.date === date ? (exercise.totalSeconds ?? 0) : 0,
+    exerciseCalories: exercise?.date === date ? (exercise.totalCalories ?? 0) : 0,
   }
+
+  dayLog.snapshot = snapshot
+  applySnapshotToSummary(dayLog.summary, snapshot)
   logs.sort((a, b) => b.date.localeCompare(a.date))
   saveAllDayLogs(logs)
 }

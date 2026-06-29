@@ -60,7 +60,7 @@ function deletePeriod(id: string) {
       <div class="pause-hero__icon" aria-hidden="true">⏸</div>
       <div>
         <p class="pause-hero__title">今天处于休整日</p>
-        <p class="pause-hero__desc">不计统计、不播放提醒、不发送通知</p>
+        <p class="pause-hero__desc">仅统计番茄轮数与锻炼，不计劳动、星级与其它项</p>
       </div>
     </section>
 
@@ -69,7 +69,7 @@ function deletePeriod(id: string) {
       <div>
         <p class="pause-hero__title">休整日</p>
         <p class="pause-hero__desc">
-          外出或调整作息时，可暂停番茄统计、星级结算、日志与提醒，不影响其它天的数据。
+          暂停劳动、星级与其它日程统计；休整日仍可使用番茄学习与锻炼记录，分开统计。
         </p>
       </div>
     </section>

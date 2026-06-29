@@ -208,7 +208,7 @@ export function useTimeManagement() {
   }
 
   async function updateBackgroundSchedule() {
-    if (!isBackgroundRuntimeEnabled() || isTodayPaused() || !state.timerDeadlineAt) {
+    if (!isBackgroundRuntimeEnabled() || !state.timerDeadlineAt) {
       await clearScheduledTimer()
       return
     }
@@ -362,12 +362,14 @@ export function useTimeManagement() {
   }
 
   function syncStudyFromClock() {
+    if (isTodayPaused()) return
     if (!isStudyingNow() || !state.studySegmentStartedAt) return
     const elapsed = Math.floor((Date.now() - state.studySegmentStartedAt) / 1000)
     state.studySeconds = state.studySegmentBaseSeconds + elapsed
   }
 
   function ensureStudySegment() {
+    if (isTodayPaused()) return
     if (!isStudyingNow() || state.studySegmentStartedAt) return
     state.studySegmentBaseSeconds = state.studySeconds
     state.studySegmentStartedAt = Date.now()
@@ -540,21 +542,10 @@ export function useTimeManagement() {
     startStudy(true)
   }
 
-  function applyPausedDayState() {
-    if (!isTodayPaused()) return false
-    stopTimer()
-    void clearScheduledTimer()
-    if (state.activity !== 'before_morning' || isTimerActive()) {
-      Object.assign(state, createDefaultState())
-    }
-    return true
-  }
-
   function checkMorningStart() {
     if (state.date !== getTodayKey()) {
       Object.assign(state, createDefaultState())
     }
-    if (applyPausedDayState()) return
     if (isAfterMorningStart() && !state.morningActivated) {
       activateMorningMode()
     }
@@ -616,7 +607,6 @@ export function useTimeManagement() {
   }
 
   function startStudy(fromModeSwitch = false) {
-    if (isTodayPaused()) return
     stopTimer()
     state.activity = 'pomodoro'
     state.pomodoroPhase = 'studying'
@@ -656,9 +646,7 @@ export function useTimeManagement() {
       if (!state.activePomodoroPeriod) {
         state.activePomodoroPeriod = recordingPeriod
       }
-      if (shouldTrackStatistics()) {
-        incrementPeriodPomodoro(state, recordingPeriod)
-      }
+      incrementPeriodPomodoro(state, recordingPeriod)
       appendActivityLog({
         type: 'pomodoro_round_complete',
         period: recordingPeriod,
@@ -730,7 +718,19 @@ export function useTimeManagement() {
   }
 
   function startExercise() {
-    if (isTodayPaused()) return
+    if (isTodayPaused()) {
+      if (state.activity === 'exercise') return
+      stopTimer()
+      clearCountdownDeadline()
+      state.exerciseSegmentBaseSeconds = state.exerciseSeconds
+      state.exerciseSegmentStartedAt = Date.now()
+      state.activity = 'exercise'
+      logActivityStart('exercise', state.dayPeriod)
+      playActivitySwitchSound()
+      ensureTimerLoop()
+      persist()
+      return
+    }
     if (state.activity !== 'free_hour' && state.activity !== 'free_hour_prompt') return
     stopTimer()
     clearCountdownDeadline()
@@ -778,6 +778,13 @@ export function useTimeManagement() {
         endedAt: Date.now(),
         period: state.dayPeriod,
       })
+    }
+    if (isTodayPaused()) {
+      state.activity = 'pomodoro'
+      state.pomodoroPhase = 'idle'
+      playActivitySwitchSound()
+      persist()
+      return
     }
     state.activity = state.freeHourPromptShown ? 'free_hour_prompt' : 'free_hour'
     playActivitySwitchSound()
@@ -1208,6 +1215,17 @@ export function useTimeManagement() {
     void clockNow.value
     const actions: { label: string; action: string; disabled?: boolean; hint?: string }[] = []
 
+    if (isTodayPaused()) {
+      if (
+        state.activity === 'pomodoro' &&
+        state.pomodoroPhase !== 'studying' &&
+        state.pomodoroPhase !== 'resting'
+      ) {
+        actions.push({ label: '开始锻炼', action: 'exercise' })
+      }
+      return actions
+    }
+
     if (
       state.activity === 'pomodoro' &&
       state.pomodoroPhase === 'studying' &&
@@ -1345,7 +1363,6 @@ export function useTimeManagement() {
     checkMorningStart()
     checkForceRest()
     resumeTimersAfterLoad()
-    applyPausedDayState()
     startWatchdog()
     void updateBackgroundSchedule()
 
