@@ -31,6 +31,14 @@ import {
   RELAXED_POMODORO_SECONDS,
 } from '../utils/relaxedQuota'
 import { appendExerciseEntry } from '../utils/exerciseRecord'
+import {
+  clearScheduledTimer,
+  disableBackgroundRuntime,
+  isBackgroundRuntimeEnabled,
+  requestBackgroundRuntimeSetup,
+  setupBackgroundRuntimeListener,
+  syncScheduledTimer,
+} from '../utils/backgroundRuntime'
 import { appendLaborEntry } from '../utils/laborRecord'
 import {
   AFTERNOON_EVENING_MIN,
@@ -74,6 +82,7 @@ export function useTimeManagement() {
   const state = reactive(loadScheduleState())
   const showLaborPicker = ref(false)
   const showExerciseCalorieForm = ref(false)
+  const backgroundRuntimeEnabled = ref(isBackgroundRuntimeEnabled())
   /** 今日番茄 = 各时段已完成轮数之和（单一数据源，无上限） */
   const todayCount = computed(() => getTotalPomodoroCount(state))
   /** 驱动界面每秒刷新（Date.now 本身不是响应式的） */
@@ -182,12 +191,41 @@ export function useTimeManagement() {
     })
   }
 
+  function getTimerNotificationBody() {
+    if (state.activity === 'free_hour' || state.activity === 'free_hour_prompt') {
+      return '自由活动时间到'
+    }
+    if (state.activity === 'night_rest_timer' || state.activity === 'sleep_prompt') {
+      return '夜间休息计时到'
+    }
+    if (state.activity === 'relaxed_pomodoro') return '宽松番茄时间到'
+    if (state.pomodoroPhase === 'studying') return '学习时间到'
+    if (state.pomodoroPhase === 'resting') return '休息时间到'
+    if (state.pomodoroPhase === 'studyDone') return '学习阶段结束'
+    if (state.pomodoroPhase === 'restDone') return '休息阶段结束'
+    return '计时结束'
+  }
+
+  async function updateBackgroundSchedule() {
+    if (!isBackgroundRuntimeEnabled() || !state.timerDeadlineAt) {
+      await clearScheduledTimer()
+      return
+    }
+    await syncScheduledTimer({
+      deadlineAt: state.timerDeadlineAt,
+      title: '自学时间',
+      body: getTimerNotificationBody(),
+      tag: 'study-countdown',
+    })
+  }
+
   function stopTimer() {
     if (timerId !== null) {
       clearInterval(timerId)
       timerId = null
     }
     countdownOnComplete = null
+    void clearScheduledTimer()
   }
 
   function clearCountdownDeadline() {
@@ -235,6 +273,7 @@ export function useTimeManagement() {
     if (!timerId) {
       timerId = setInterval(runTimerTick, 1000)
     }
+    void updateBackgroundSchedule()
   }
 
   function startCountdown(onComplete: () => void) {
@@ -351,16 +390,25 @@ export function useTimeManagement() {
 
   function handleAppHidden() {
     persist()
+    if (isBackgroundRuntimeEnabled() && isTimerActive()) {
+      void updateBackgroundSchedule()
+      ensureTimerLoop()
+    }
+  }
+
+  function shouldRunWatchdogSync() {
+    if (!isTimerActive()) return false
+    if (isBackgroundRuntimeEnabled()) return true
+    return document.visibilityState === 'visible'
   }
 
   function startWatchdog() {
     if (watchdogId) return
     watchdogId = setInterval(() => {
-      if (document.visibilityState !== 'visible') return
-      if (!isTimerActive()) return
+      if (!shouldRunWatchdogSync()) return
       syncAllFromClock()
       if (!timerId) ensureTimerLoop()
-    }, 2000)
+    }, isBackgroundRuntimeEnabled() ? 1000 : 2000)
   }
 
   function stopWatchdog() {
@@ -1225,6 +1273,19 @@ export function useTimeManagement() {
     if (action === 'nightRest') enterNightRest()
   }
 
+  async function toggleBackgroundRuntime() {
+    if (backgroundRuntimeEnabled.value) {
+      disableBackgroundRuntime()
+      backgroundRuntimeEnabled.value = false
+    } else {
+      await requestBackgroundRuntimeSetup()
+      backgroundRuntimeEnabled.value = true
+    }
+    stopWatchdog()
+    startWatchdog()
+    void updateBackgroundSchedule()
+  }
+
   function handleVisibilityChange() {
     if (document.visibilityState === 'visible') handleAppVisible()
     else handleAppHidden()
@@ -1251,6 +1312,8 @@ export function useTimeManagement() {
     syncLegacyTodayCount(getTotalPomodoroCount(state))
   }
 
+  let removeBackgroundListener: (() => void) | null = null
+
   onMounted(() => {
     bumpClock()
     migratePomodoroSessionState()
@@ -1258,6 +1321,11 @@ export function useTimeManagement() {
     checkForceRest()
     resumeTimersAfterLoad()
     startWatchdog()
+    void updateBackgroundSchedule()
+
+    removeBackgroundListener = setupBackgroundRuntimeListener(() => {
+      handleAppVisible()
+    })
 
     tickId = setInterval(() => {
       checkMorningStart()
@@ -1273,6 +1341,7 @@ export function useTimeManagement() {
     stopTimer()
     stopWatchdog()
     if (tickId) clearInterval(tickId)
+    removeBackgroundListener?.()
     document.removeEventListener('visibilitychange', handleVisibilityChange)
     window.removeEventListener('focus', handleAppVisible)
     window.removeEventListener('pageshow', handleAppVisible)
@@ -1302,5 +1371,7 @@ export function useTimeManagement() {
     cancelExerciseCalorieForm,
     confirmExerciseEnd,
     LABOR_CATEGORY_LABELS,
+    backgroundRuntimeEnabled,
+    toggleBackgroundRuntime,
   }
 }

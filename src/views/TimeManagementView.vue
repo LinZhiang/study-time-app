@@ -25,6 +25,8 @@ const {
   cancelExerciseCalorieForm,
   confirmExerciseEnd,
   LABOR_CATEGORY_LABELS,
+  backgroundRuntimeEnabled,
+  toggleBackgroundRuntime,
 } = useTimeManagement()
 
 const exerciseCalorieInput = ref('')
@@ -77,6 +79,27 @@ const isTimerRunning = computed(() => {
       <div class="daily-stats__item">
         <span class="daily-stats__value">{{ relaxedWeekRemainingDisplay }}</span>
         <span class="daily-stats__label">宽松本周</span>
+      </div>
+    </section>
+
+    <section class="card background-runtime-card">
+      <div class="background-runtime-card__row">
+        <div>
+          <p class="background-runtime-card__title">后台计时</p>
+          <p class="background-runtime-card__desc">
+            切到后台仍按时间戳继续计时，到点会发系统通知（需允许通知权限）
+          </p>
+        </div>
+        <button
+          class="toggle-switch"
+          :class="{ 'toggle-switch--on': backgroundRuntimeEnabled }"
+          type="button"
+          role="switch"
+          :aria-checked="backgroundRuntimeEnabled"
+          @click="toggleBackgroundRuntime"
+        >
+          <span class="toggle-switch__thumb" />
+        </button>
       </div>
     </section>
 
@@ -337,6 +360,63 @@ const isTimerRunning = computed(() => {
   height: 32px;
   background: var(--color-border);
   flex-shrink: 0;
+}
+
+.background-runtime-card {
+  padding: 14px 16px;
+}
+
+.background-runtime-card__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.background-runtime-card__title {
+  margin: 0 0 4px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.background-runtime-card__desc {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+}
+
+.toggle-switch {
+  position: relative;
+  width: 52px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: var(--color-border);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.2s ease;
+}
+
+.toggle-switch--on {
+  background: var(--color-primary);
+}
+
+.toggle-switch__thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 18%);
+  transition: transform 0.2s ease;
+}
+
+.toggle-switch--on .toggle-switch__thumb {
+  transform: translateX(20px);
 }
 
 .timer-card {
