@@ -40,6 +40,7 @@ import {
   syncScheduledTimer,
 } from '../utils/backgroundRuntime'
 import { appendLaborEntry } from '../utils/laborRecord'
+import { isTodayPaused, shouldTrackStatistics } from '../utils/pausePeriod'
 import {
   AFTERNOON_EVENING_MIN,
   createDefaultState,
@@ -207,7 +208,7 @@ export function useTimeManagement() {
   }
 
   async function updateBackgroundSchedule() {
-    if (!isBackgroundRuntimeEnabled() || !state.timerDeadlineAt) {
+    if (!isBackgroundRuntimeEnabled() || isTodayPaused() || !state.timerDeadlineAt) {
       await clearScheduledTimer()
       return
     }
@@ -539,16 +540,28 @@ export function useTimeManagement() {
     startStudy(true)
   }
 
+  function applyPausedDayState() {
+    if (!isTodayPaused()) return false
+    stopTimer()
+    void clearScheduledTimer()
+    if (state.activity !== 'before_morning' || isTimerActive()) {
+      Object.assign(state, createDefaultState())
+    }
+    return true
+  }
+
   function checkMorningStart() {
     if (state.date !== getTodayKey()) {
       Object.assign(state, createDefaultState())
     }
+    if (applyPausedDayState()) return
     if (isAfterMorningStart() && !state.morningActivated) {
       activateMorningMode()
     }
   }
 
   function checkForceRest() {
+    if (isTodayPaused()) return
     if (!isForceRestTime()) return
     if (state.dayPeriod === 'night_rest' || state.dayPeriod === 'sleep') return
     enterNightRest(true)
@@ -603,6 +616,7 @@ export function useTimeManagement() {
   }
 
   function startStudy(fromModeSwitch = false) {
+    if (isTodayPaused()) return
     stopTimer()
     state.activity = 'pomodoro'
     state.pomodoroPhase = 'studying'
@@ -642,7 +656,9 @@ export function useTimeManagement() {
       if (!state.activePomodoroPeriod) {
         state.activePomodoroPeriod = recordingPeriod
       }
-      incrementPeriodPomodoro(state, recordingPeriod)
+      if (shouldTrackStatistics()) {
+        incrementPeriodPomodoro(state, recordingPeriod)
+      }
       appendActivityLog({
         type: 'pomodoro_round_complete',
         period: recordingPeriod,
@@ -671,6 +687,7 @@ export function useTimeManagement() {
   }
 
   function enterNoonMode() {
+    if (isTodayPaused()) return
     if (state.morningCount < MORNING_NOON_MIN) return
     stopTimer()
     clearPomodoroSession()
@@ -713,6 +730,7 @@ export function useTimeManagement() {
   }
 
   function startExercise() {
+    if (isTodayPaused()) return
     if (state.activity !== 'free_hour' && state.activity !== 'free_hour_prompt') return
     stopTimer()
     clearCountdownDeadline()
@@ -781,6 +799,7 @@ export function useTimeManagement() {
   }
 
   function startLabor(category: LaborCategory) {
+    if (isTodayPaused()) return
     if (!canStartLaborNow()) return
     showLaborPicker.value = false
 
@@ -859,6 +878,7 @@ export function useTimeManagement() {
   }
 
   function enterEveningMode() {
+    if (isTodayPaused()) return
     if (state.afternoonCount < AFTERNOON_EVENING_MIN) return
     stopTimer()
     clearPomodoroSession()
@@ -870,6 +890,7 @@ export function useTimeManagement() {
   }
 
   function enterNightRest(forced = false) {
+    if (!forced && isTodayPaused()) return
     void forced
     stopTimer()
     clearPomodoroSession()
@@ -895,6 +916,7 @@ export function useTimeManagement() {
   }
 
   function startMidBreak() {
+    if (isTodayPaused()) return
     if (state.activity !== 'pomodoro' || state.pomodoroPhase !== 'studying') return
     if (state.midBreakUsedSeconds >= MID_BREAK_DAILY_QUOTA) return
     pauseStudySegment()
@@ -939,6 +961,7 @@ export function useTimeManagement() {
   }
 
   function startRelaxedPomodoro() {
+    if (isTodayPaused()) return
     if (!isPomodoroPeriod(state.dayPeriod)) return
     if (state.activity !== 'pomodoro') return
     if (!canUseRelaxedPomodoro()) return
@@ -946,7 +969,9 @@ export function useTimeManagement() {
 
     if (state.pomodoroPhase === 'studying') pauseStudySegment()
     stopTimer()
-    incrementPeriodPomodoro(state, state.dayPeriod, 2)
+    if (shouldTrackStatistics()) {
+      incrementPeriodPomodoro(state, state.dayPeriod, 2)
+    }
 
     appendActivityLog({
       type: 'pomodoro_round_complete',
@@ -1320,6 +1345,7 @@ export function useTimeManagement() {
     checkMorningStart()
     checkForceRest()
     resumeTimersAfterLoad()
+    applyPausedDayState()
     startWatchdog()
     void updateBackgroundSchedule()
 
@@ -1373,5 +1399,6 @@ export function useTimeManagement() {
     LABOR_CATEGORY_LABELS,
     backgroundRuntimeEnabled,
     toggleBackgroundRuntime,
+    isTodayPaused,
   }
 }

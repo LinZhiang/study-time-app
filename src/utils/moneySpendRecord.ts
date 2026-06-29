@@ -12,6 +12,7 @@ import {
 } from '../types/moneySpend'
 import { DAILY_STARS_START_DATE } from '../types/dailyStars'
 import { getTodayKey } from './scheduleStorage'
+import { shouldTrackStatistics } from './pausePeriod'
 import { logMoneySpendSubmit } from './activityLog'
 
 function daysBetween(fromDate: string, toDate: string) {
@@ -144,6 +145,7 @@ export function readMoneySpendForDate(date: string): DailyMoneySpendRecord {
 
 /** 追加一笔消费；可一天内多次提交，金额累加 */
 export function submitTodayMoneySpend(hasSpending: boolean, spentInput: number) {
+  if (!shouldTrackStatistics()) return false
   syncMoneyWallet()
   const wallet = loadWalletRaw()
   const record = loadTodaySpendRaw()

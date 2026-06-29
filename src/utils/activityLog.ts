@@ -12,6 +12,7 @@ import {
   LOGGING_START_DATE_KEY,
 } from '../types/log'
 import { getTodayKey } from './scheduleStorage'
+import { shouldTrackStatistics } from './pausePeriod'
 
 const ACTIVITY_LABELS: Partial<Record<Activity, string>> = {
   pomodoro: '番茄学习',
@@ -58,7 +59,7 @@ export function getLoggingStartDate(): string {
 }
 
 export function shouldLogToday(): boolean {
-  return getTodayKey() >= getLoggingStartDate()
+  return getTodayKey() >= getLoggingStartDate() && shouldTrackStatistics()
 }
 
 export function getLoggingStartDateLabel() {
@@ -244,6 +245,7 @@ export function appendActivityLog(input: {
   if (!shouldLogToday()) return
 
   const at = input.at ?? new Date()
+  if (!shouldTrackStatistics(formatDateKey(at))) return
   const date = formatDateKey(at)
   const entry: LogEntry = {
     id: createEntryId(),
@@ -387,6 +389,31 @@ export function logStudyRecordChange(input: {
     type: 'study_record_change',
     label: buildStudyRecordChangeLabel(input),
   })
+}
+
+export function finalizePausedDayLog(date: string) {
+  const logs = loadAllDayLogs()
+  const dayLog = getOrCreateDayLog(logs, date)
+  dayLog.entries = []
+  dayLog.summary = createEmptySummary()
+  dayLog.snapshot = {
+    finalizedAt: Date.now(),
+    paused: true,
+    schedule: {
+      morningPomodoros: 0,
+      afternoonPomodoros: 0,
+      eveningPomodoros: 0,
+      studySeconds: 0,
+      midBreakUsedSeconds: 0,
+    },
+    laborEntries: [],
+    exerciseEntries: [],
+    laborSeconds: 0,
+    exerciseSeconds: 0,
+    exerciseCalories: 0,
+  }
+  logs.sort((a, b) => b.date.localeCompare(a.date))
+  saveAllDayLogs(logs)
 }
 
 export function finalizeDayLog(date: string, starsBreakdown?: DailyStarBreakdown) {

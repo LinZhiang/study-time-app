@@ -1,6 +1,7 @@
 import type { DailyCleanlinessRecord } from '../types/cleanliness'
 import { DAILY_CLEANLINESS_STORAGE_KEY } from '../types/cleanliness'
 import { getTodayKey } from './scheduleStorage'
+import { shouldTrackStatistics } from './pausePeriod'
 import { logCleanlinessMark } from './activityLog'
 
 function createEmptyRecord(date = getTodayKey()): DailyCleanlinessRecord {
@@ -28,6 +29,7 @@ export function loadTodayCleanliness(): DailyCleanlinessRecord {
 }
 
 export function setTodayCleanlinessMaintained(maintained: boolean) {
+  if (!shouldTrackStatistics()) return
   saveRecord({ date: getTodayKey(), maintained })
   logCleanlinessMark(maintained)
 }

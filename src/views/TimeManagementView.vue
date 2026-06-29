@@ -27,6 +27,7 @@ const {
   LABOR_CATEGORY_LABELS,
   backgroundRuntimeEnabled,
   toggleBackgroundRuntime,
+  isTodayPaused,
 } = useTimeManagement()
 
 const exerciseCalorieInput = ref('')
@@ -70,6 +71,11 @@ const isTimerRunning = computed(() => {
 
 <template>
   <div class="page time-page">
+    <section v-if="isTodayPaused()" class="card pause-day-banner">
+      <p class="pause-day-banner__title">今日为休整日</p>
+      <p class="pause-day-banner__desc">不计统计、不播放提醒。可在底部「休整日」栏目调整安排。</p>
+    </section>
+
     <section class="daily-stats card">
       <div class="daily-stats__item">
         <span class="daily-stats__value">{{ midBreakRemainingDisplay }}</span>
@@ -325,6 +331,26 @@ const isTimerRunning = computed(() => {
   .daily-stats__value {
     font-size: 22px;
   }
+}
+
+.pause-day-banner {
+  padding: 14px 16px;
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+}
+
+.pause-day-banner__title {
+  margin: 0 0 4px;
+  font-size: 15px;
+  font-weight: 600;
+  color: #c45c26;
+}
+
+.pause-day-banner__desc {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-text-secondary);
 }
 
 .daily-stats {

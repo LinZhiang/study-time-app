@@ -38,6 +38,12 @@ const router = createRouter({
       meta: { title: '查看日志' },
     },
     {
+      path: '/pause',
+      name: 'pause',
+      component: () => import('../views/PausePeriodView.vue'),
+      meta: { title: '休整日' },
+    },
+    {
       path: '/progress',
       redirect: '/daily',
     },

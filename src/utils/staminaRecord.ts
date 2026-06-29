@@ -1,6 +1,7 @@
 import type { StaminaManualStars } from '../types/dailyStars'
 import { DAILY_STAMINA_STORAGE_KEY } from '../types/dailyStars'
 import { getTodayKey } from './scheduleStorage'
+import { shouldTrackStatistics } from './pausePeriod'
 import { logStaminaAdjust } from './activityLog'
 
 interface DailyStaminaRecord {
@@ -34,6 +35,7 @@ export function loadTodayStaminaManual(): StaminaManualStars {
 }
 
 export function setTodayStaminaManual(manualStars: StaminaManualStars) {
+  if (!shouldTrackStatistics()) return
   saveRecord({ date: getTodayKey(), manualStars })
   logStaminaAdjust(manualStars)
 }

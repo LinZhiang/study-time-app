@@ -49,6 +49,7 @@ export interface DayLogScheduleSnapshot {
 
 export interface DayLogSnapshot {
   finalizedAt: number
+  paused?: boolean
   schedule: DayLogScheduleSnapshot
   stars?: DailyStarBreakdown
   laborEntries: LaborEntry[]

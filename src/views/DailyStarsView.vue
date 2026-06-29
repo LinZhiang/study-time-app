@@ -15,6 +15,7 @@ import {
   formatDailyStarsStartDate,
   getDailyStarsDisplayState,
 } from '../utils/dailyStarsArchive'
+import { formatPauseDateLabel } from '../utils/pausePeriod'
 import { loadTodayStaminaManual, setTodayStaminaManual } from '../utils/staminaRecord'
 import {
   formatMoneyAmount,
@@ -126,6 +127,12 @@ const headerSubtitle = computed(() => {
 })
 
 const pendingMessage = computed(() => {
+  if (displayState.value.status === 'paused_today') {
+    return '今天为休整日，不进行日常星级统计与提交。'
+  }
+  if (displayState.value.status === 'paused_yesterday') {
+    return `${formatPauseDateLabel(displayState.value.date)} 为休整日，昨日无星级结算。`
+  }
   if (displayState.value.status === 'before_start') {
     return `日常星级自 ${formatDailyStarsStartDate(displayState.value.startDate)} 起统计（不含 6 月 29 日）。当日 24:00 结束后才会生成星级，今日暂不可查看。`
   }

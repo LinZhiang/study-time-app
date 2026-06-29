@@ -8,6 +8,7 @@ const tabs = [
   { path: '/daily', label: '日常记录', icon: 'daily' },
   { path: '/daily-stars', label: '日常星级', icon: 'stars' },
   { path: '/study', label: '学习记录', icon: 'study' },
+  { path: '/pause', label: '休整日', icon: 'pause' },
   { path: '/logs', label: '查看日志', icon: 'logs' },
 ]
 

@@ -2,6 +2,7 @@ import type { DailyLaborRecord, LaborCategory, LaborEntry } from '../types/labor
 import { DAILY_LABOR_STORAGE_KEY } from '../types/labor'
 import type { DayPeriod } from '../types/schedule'
 import { getTodayKey } from './scheduleStorage'
+import { shouldTrackStatistics } from './pausePeriod'
 import { logLaborRecord } from './activityLog'
 
 function createEmptyRecord(date = getTodayKey()): DailyLaborRecord {
@@ -39,6 +40,7 @@ export function appendLaborEntry(input: {
   endedAt: number
   period: DayPeriod
 }) {
+  if (!shouldTrackStatistics()) return null
   const record = loadRawRecord()
   const entry: LaborEntry = {
     id: `${input.endedAt}-${Math.random().toString(36).slice(2, 8)}`,

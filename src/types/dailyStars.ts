@@ -53,4 +53,6 @@ export interface DailyStarsArchiveEntry {
 export type DailyStarsDisplayState =
   | { status: 'before_start'; startDate: string }
   | { status: 'waiting_day_end'; todayKey: string }
+  | { status: 'paused_today'; todayKey: string }
+  | { status: 'paused_yesterday'; date: string }
   | { status: 'ready'; date: string; breakdown: DailyStarBreakdown }

@@ -14,7 +14,7 @@ import {
 import type { ScheduleState } from '../types/schedule'
 import { SCHEDULE_STORAGE_KEY } from '../types/schedule'
 import { calculateDailyStars, calculateStaminaAutoStars } from './dailyStars'
-import { finalizeDayLog, isDayLogFinalized } from './activityLog'
+import { finalizeDayLog, finalizePausedDayLog, isDayLogFinalized } from './activityLog'
 import { createDefaultState, saveScheduleState } from './scheduleStorage'
 import { readCleanlinessForDate, resetCleanlinessForToday } from './cleanlinessRecord'
 import {
@@ -25,6 +25,7 @@ import {
 } from './moneySpendRecord'
 import { readStaminaManualForDate, resetStaminaForToday } from './staminaRecord'
 import { getTodayKey, getYesterdayKey } from './scheduleStorage'
+import { isDatePaused, isTodayPaused } from './pausePeriod'
 
 function readRawLabor(): DailyLaborRecord | null {
   try {
@@ -177,6 +178,18 @@ export function finalizePreviousDayIfNeeded() {
   if (!pendingDate) return
   if (hasPendingDayBeenFinalized(pendingDate)) return
 
+  if (isDatePaused(pendingDate)) {
+    finalizePausedDayLog(pendingDate)
+    rolloverScheduleStorageIfStale(pendingDate)
+    resetLaborRecordForToday(today)
+    resetExerciseRecordForToday(today)
+    resetStaminaForToday(today)
+    resetMoneySpendForToday(today)
+    resetCleanlinessForToday(today)
+    syncMoneyWallet(today)
+    return
+  }
+
   const totals = collectTotalsForDate(pendingDate)
   const moneyRecord = readMoneySpendForDate(pendingDate)
   let starsBreakdown: DailyStarBreakdown | undefined
@@ -206,11 +219,19 @@ export function getDailyStarsDisplayState(): DailyStarsDisplayState {
   finalizePreviousDayIfNeeded()
 
   const today = getTodayKey()
+  if (isTodayPaused()) {
+    return { status: 'paused_today', todayKey: today }
+  }
+
   if (today < DAILY_STARS_START_DATE) {
     return { status: 'before_start', startDate: DAILY_STARS_START_DATE }
   }
 
   const yesterday = getYesterdayKey(today)
+  if (isDatePaused(yesterday)) {
+    return { status: 'paused_yesterday', date: yesterday }
+  }
+
   if (yesterday >= DAILY_STARS_START_DATE) {
     const breakdown = getArchivedDailyStars(yesterday)
     if (breakdown) {

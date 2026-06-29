@@ -5,6 +5,7 @@
  * - 首次点击页面时预加载，之后计时器触发播放不再发起新 HTTP 请求
  */
 import { ref } from 'vue'
+import { isTodayPaused } from './pausePeriod'
 const soundFiles = {
   start: 'audio/start.dat',
   classStart: 'audio/class-start.dat',
@@ -122,7 +123,12 @@ function playKey(key: SoundKey, volume = 1) {
   })
 }
 
+function shouldPlayAlertSounds() {
+  return !isTodayPaused()
+}
+
 export function playModeSwitchSound() {
+  if (!shouldPlayAlertSounds()) return
   if (!audioUnlocked) return
   if (suppressTimer) clearTimeout(suppressTimer)
   suppressClassSounds = true
@@ -134,6 +140,7 @@ export function playModeSwitchSound() {
 }
 
 export function playPomodoroSound(key: SoundKey) {
+  if (!shouldPlayAlertSounds()) return
   if (suppressClassSounds && (key === 'classStart' || key === 'classEnd')) {
     return
   }
@@ -141,15 +148,18 @@ export function playPomodoroSound(key: SoundKey) {
 }
 
 export function playReminderSound() {
+  if (!shouldPlayAlertSounds()) return
   playKey('start')
 }
 
 /** 锻炼、劳动、休整等活动模式切换（pomodoro-class-end.wav） */
 export function playActivitySwitchSound() {
+  if (!shouldPlayAlertSounds()) return
   playKey('pomodoroClassEnd')
 }
 
 export function playTimeUpSound() {
+  if (!shouldPlayAlertSounds()) return
   playKey('timeUp')
 }
 
