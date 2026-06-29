@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { unlockAudio } from '../utils/audio'
 import { LABOR_CATEGORIES, useTimeManagement } from '../composables/useTimeManagement'
 
 const {
@@ -27,7 +28,7 @@ const {
   LABOR_CATEGORY_LABELS,
   backgroundRuntimeEnabled,
   toggleBackgroundRuntime,
-  isTodayPaused,
+  todayPaused,
 } = useTimeManagement()
 
 const exerciseCalorieInput = ref('')
@@ -41,13 +42,16 @@ watch(showExerciseCalorieForm, (visible) => {
 })
 
 function submitExerciseCalories() {
-  const calories = Number(exerciseCalorieInput.value)
-  if (!exerciseCalorieInput.value.trim() || !Number.isFinite(calories) || calories <= 0) {
+  unlockAudio()
+  exerciseCalorieError.value = ''
+  const raw = String(exerciseCalorieInput.value ?? '').trim()
+  const calories = Number(raw)
+  if (!raw || !Number.isFinite(calories) || calories <= 0) {
     exerciseCalorieError.value = '请填写大于 0 的卡路里'
     return
   }
   if (!confirmExerciseEnd(calories)) {
-    exerciseCalorieError.value = '请填写大于 0 的卡路里'
+    exerciseCalorieError.value = '结束锻炼失败，请点「继续锻炼」后重试'
   }
 }
 
@@ -71,10 +75,10 @@ const isTimerRunning = computed(() => {
 
 <template>
   <div class="page time-page">
-    <section v-if="isTodayPaused()" class="card pause-day-banner">
+    <section v-if="todayPaused" class="card pause-day-banner">
       <p class="pause-day-banner__title">今日为休整日</p>
       <p class="pause-day-banner__desc">
-        仅保留番茄学习与锻炼统计；不计劳动、星级与其它日程项。
+        全天 24 小时可用番茄学习与锻炼；仅统计番茄轮数与锻炼，不计劳动、星级与其它日程。
       </p>
     </section>
 
@@ -208,53 +212,65 @@ const isTimerRunning = computed(() => {
       </div>
     </div>
 
-    <div v-if="showExerciseCalorieForm" class="labor-picker">
-      <div class="labor-picker__panel card">
-        <h3 class="labor-picker__title">填写消耗卡路里</h3>
-        <p class="labor-picker__hint">请填写本次锻炼一共消耗的卡路里（千卡）</p>
-        <label class="calorie-form__field">
-          <span class="calorie-form__label">消耗卡路里</span>
-          <input
-            v-model="exerciseCalorieInput"
-            class="calorie-form__input"
-            type="number"
-            min="1"
-            step="1"
-            inputmode="numeric"
-            placeholder="例如 180"
-            @keydown.enter.prevent="submitExerciseCalories"
-          />
-        </label>
-        <p v-if="exerciseCalorieError" class="calorie-form__error">{{ exerciseCalorieError }}</p>
-        <button class="btn btn--primary btn--large calorie-form__submit" type="button" @click="submitExerciseCalories">
-          确认结束锻炼
-        </button>
-        <button class="btn btn--ghost btn--small labor-picker__cancel" type="button" @click="cancelExerciseCalorieForm">
-          继续锻炼
-        </button>
-      </div>
-    </div>
-
-    <div v-if="showLaborPicker" class="labor-picker">
-      <div class="labor-picker__panel card">
-        <h3 class="labor-picker__title">选择劳动类型</h3>
-        <p class="labor-picker__hint">记录做饭、清洁、准备考试资料等额外劳动时间</p>
-        <div class="labor-picker__options">
+    <Teleport to="body">
+      <div v-if="showExerciseCalorieForm" class="labor-picker">
+        <div class="labor-picker__panel card" @click.stop>
+          <h3 class="labor-picker__title">填写消耗卡路里</h3>
+          <p class="labor-picker__hint">请填写本次锻炼一共消耗的卡路里（千卡）</p>
+          <label class="calorie-form__field">
+            <span class="calorie-form__label">消耗卡路里</span>
+            <input
+              v-model="exerciseCalorieInput"
+              class="calorie-form__input"
+              type="number"
+              min="1"
+              step="1"
+              inputmode="numeric"
+              placeholder="例如 180"
+              @keydown.enter.prevent="submitExerciseCalories"
+            />
+          </label>
+          <p v-if="exerciseCalorieError" class="calorie-form__error">{{ exerciseCalorieError }}</p>
           <button
-            v-for="category in LABOR_CATEGORIES"
-            :key="category"
-            class="btn btn--ghost"
+            class="btn btn--primary btn--large calorie-form__submit"
             type="button"
-            @click="startLabor(category)"
+            @click="submitExerciseCalories"
           >
-            {{ LABOR_CATEGORY_LABELS[category] }}
+            确认结束锻炼
+          </button>
+          <button
+            class="btn btn--ghost btn--small labor-picker__cancel"
+            type="button"
+            @click="cancelExerciseCalorieForm"
+          >
+            继续锻炼
           </button>
         </div>
-        <button class="btn btn--ghost btn--small labor-picker__cancel" type="button" @click="cancelLaborPicker">
-          取消
-        </button>
       </div>
-    </div>
+    </Teleport>
+
+    <Teleport to="body">
+      <div v-if="showLaborPicker" class="labor-picker">
+        <div class="labor-picker__panel card" @click.stop>
+          <h3 class="labor-picker__title">选择劳动类型</h3>
+          <p class="labor-picker__hint">记录做饭、清洁、准备考试资料等额外劳动时间</p>
+          <div class="labor-picker__options">
+            <button
+              v-for="category in LABOR_CATEGORIES"
+              :key="category"
+              class="btn btn--ghost"
+              type="button"
+              @click="startLabor(category)"
+            >
+              {{ LABOR_CATEGORY_LABELS[category] }}
+            </button>
+          </div>
+          <button class="btn btn--ghost btn--small labor-picker__cancel" type="button" @click="cancelLaborPicker">
+            取消
+          </button>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -641,7 +657,7 @@ const isTimerRunning = computed(() => {
 .labor-picker {
   position: fixed;
   inset: 0;
-  z-index: 100;
+  z-index: 200;
   display: flex;
   align-items: flex-end;
   justify-content: center;

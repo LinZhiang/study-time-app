@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import type { PausePeriod } from '../types/pausePeriod'
 import {
   addPausePeriod,
@@ -7,6 +7,7 @@ import {
   formatPausePeriodLabel,
   isTodayPaused,
   listPausePeriods,
+  PAUSE_PERIODS_UPDATED_EVENT,
   removePausePeriod,
 } from '../utils/pausePeriod'
 import { getTodayKey } from '../utils/scheduleStorage'
@@ -18,8 +19,25 @@ const startDate = ref(getTodayKey())
 const endDate = ref(getTodayKey())
 const note = ref('')
 const formError = ref('')
+const pauseTick = ref(0)
 
-const todayPaused = computed(() => isTodayPaused())
+const todayPaused = computed(() => {
+  void pauseTick.value
+  return isTodayPaused()
+})
+
+function onPausePeriodsUpdated() {
+  pauseTick.value++
+  refresh()
+}
+
+onMounted(() => {
+  window.addEventListener(PAUSE_PERIODS_UPDATED_EVENT, onPausePeriodsUpdated)
+})
+
+onUnmounted(() => {
+  window.removeEventListener(PAUSE_PERIODS_UPDATED_EVENT, onPausePeriodsUpdated)
+})
 
 function refresh() {
   periods.value = listPausePeriods()

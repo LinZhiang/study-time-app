@@ -133,6 +133,14 @@ export function isForceRestTime() {
   return hour >= 23
 }
 
+/** 休整日按当前时刻归入番茄统计时段（全天可用，仅用于轮数分桶） */
+export function resolvePauseDayPeriodByClock(): DayPeriod {
+  const { hour } = getCurrentHourMinute()
+  if (hour >= 18) return 'evening'
+  if (hour >= 14) return 'afternoon'
+  return 'morning'
+}
+
 export function isPomodoroCountPeriod(period: DayPeriod) {
   return period === 'morning' || period === 'afternoon' || period === 'evening'
 }

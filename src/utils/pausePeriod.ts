@@ -1,6 +1,15 @@
 import type { PausePeriod } from '../types/pausePeriod'
 import { PAUSE_PERIODS_STORAGE_KEY } from '../types/pausePeriod'
-import { getTodayKey } from './scheduleStorage'
+import type { ScheduleState } from '../types/schedule'
+import { getTodayKey, resolvePauseDayPeriodByClock } from './scheduleStorage'
+
+export const PAUSE_PERIODS_UPDATED_EVENT = 'pause-periods-updated'
+
+const PAUSE_DAY_STUDY_SECONDS = 40 * 60
+
+export function notifyPausePeriodsUpdated() {
+  window.dispatchEvent(new CustomEvent(PAUSE_PERIODS_UPDATED_EVENT))
+}
 
 function generateId() {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) {
@@ -39,6 +48,63 @@ export function isDatePaused(date: string): boolean {
 
 export function isTodayPaused(): boolean {
   return isDatePaused(getTodayKey())
+}
+
+/** 加载或切换日期后，把休整日从 before_morning 等状态切到全天番茄模式 */
+export function applyPauseDaySchedulePatch(state: ScheduleState): boolean {
+  const today = getTodayKey()
+  if (!isDatePaused(today) || state.date !== today) return false
+
+  state.morningActivated = true
+
+  if (state.activity === 'exercise') return true
+
+  if (
+    state.activity === 'pomodoro' &&
+    (state.pomodoroPhase === 'studying' ||
+      state.pomodoroPhase === 'resting' ||
+      state.pomodoroPhase === 'studyDone')
+  ) {
+    return true
+  }
+
+  const period = resolvePauseDayPeriodByClock()
+  const needsReset =
+    state.activity === 'before_morning' ||
+    state.activity === 'waiting_meal' ||
+    state.activity === 'free_hour' ||
+    state.activity === 'free_hour_prompt' ||
+    state.activity === 'labor' ||
+    state.activity === 'mid_break' ||
+    state.activity === 'relaxed_pomodoro' ||
+    state.activity === 'night_rest_timer' ||
+    state.activity === 'sleep_prompt' ||
+    state.dayPeriod === 'noon' ||
+    state.dayPeriod === 'night_rest' ||
+    state.dayPeriod === 'sleep'
+
+  if (needsReset) {
+    state.timerDeadlineAt = null
+    state.dayPeriod = period
+    state.activity = 'pomodoro'
+    state.pomodoroPhase = 'idle'
+    state.pomodoroRemaining = PAUSE_DAY_STUDY_SECONDS
+    state.activePomodoroPeriod = null
+    state.currentPomodoroRound = 0
+    state.pausedStudyRemaining = 0
+    state.studySegmentStartedAt = null
+    return true
+  }
+
+  if (
+    state.activity === 'pomodoro' &&
+    (state.pomodoroPhase === 'idle' || state.pomodoroPhase === 'restDone')
+  ) {
+    state.dayPeriod = period
+    return true
+  }
+
+  return true
 }
 
 /** 完整日程统计（劳动、星级、学习时长等） */
@@ -84,11 +150,13 @@ export function addPausePeriod(input: {
     createdAt: Date.now(),
   }
   savePausePeriods([period, ...loadPausePeriods()])
+  notifyPausePeriodsUpdated()
   return period
 }
 
 export function removePausePeriod(id: string) {
   savePausePeriods(loadPausePeriods().filter((period) => period.id !== id))
+  notifyPausePeriodsUpdated()
 }
 
 export function countDaysInPeriod(period: PausePeriod) {

@@ -40,7 +40,12 @@ import {
   syncScheduledTimer,
 } from '../utils/backgroundRuntime'
 import { appendLaborEntry } from '../utils/laborRecord'
-import { isTodayPaused, shouldTrackStatistics } from '../utils/pausePeriod'
+import {
+  applyPauseDaySchedulePatch,
+  isTodayPaused,
+  PAUSE_PERIODS_UPDATED_EVENT,
+  shouldTrackStatistics,
+} from '../utils/pausePeriod'
 import {
   AFTERNOON_EVENING_MIN,
   createDefaultState,
@@ -56,6 +61,7 @@ import {
   isPomodoroCountPeriod,
   loadScheduleState,
   MORNING_NOON_MIN,
+  resolvePauseDayPeriodByClock,
   saveScheduleState,
 } from '../utils/scheduleStorage'
 
@@ -81,6 +87,9 @@ export const LABOR_CATEGORIES: LaborCategory[] = ['cooking', 'cleaning', 'exam_p
 
 export function useTimeManagement() {
   const state = reactive(loadScheduleState())
+  if (applyPauseDaySchedulePatch(state)) {
+    saveScheduleState({ ...state })
+  }
   const showLaborPicker = ref(false)
   const showExerciseCalorieForm = ref(false)
   const backgroundRuntimeEnabled = ref(isBackgroundRuntimeEnabled())
@@ -382,6 +391,7 @@ export function useTimeManagement() {
   }
 
   function handleAppVisible() {
+    checkMorningStart()
     syncAllFromClock()
     if (isTimerActive()) {
       if (!countdownOnComplete && state.timerDeadlineAt) {
@@ -542,9 +552,75 @@ export function useTimeManagement() {
     startStudy(true)
   }
 
+  function enterPauseDayPomodoroIdle() {
+    const period = resolvePauseDayPeriodByClock()
+    state.morningActivated = true
+    state.dayPeriod = period
+    state.activity = 'pomodoro'
+    state.pomodoroPhase = 'idle'
+    state.pomodoroRemaining = STUDY_SECONDS
+    clearPomodoroSession()
+  }
+
+  function activatePauseDayMode() {
+    if (!isTodayPaused()) return
+
+    state.morningActivated = true
+
+    if (state.activity === 'exercise') {
+      persist()
+      return
+    }
+
+    if (
+      state.activity === 'pomodoro' &&
+      (state.pomodoroPhase === 'studying' ||
+        state.pomodoroPhase === 'resting' ||
+        state.pomodoroPhase === 'studyDone')
+    ) {
+      persist()
+      return
+    }
+
+    const period = resolvePauseDayPeriodByClock()
+    const needsReset =
+      state.activity === 'before_morning' ||
+      state.activity === 'waiting_meal' ||
+      state.activity === 'free_hour' ||
+      state.activity === 'free_hour_prompt' ||
+      state.activity === 'labor' ||
+      state.activity === 'mid_break' ||
+      state.activity === 'relaxed_pomodoro' ||
+      state.activity === 'night_rest_timer' ||
+      state.activity === 'sleep_prompt' ||
+      state.dayPeriod === 'noon' ||
+      state.dayPeriod === 'night_rest' ||
+      state.dayPeriod === 'sleep'
+
+    if (needsReset) {
+      stopTimer()
+      clearCountdownDeadline()
+      enterPauseDayPomodoroIdle()
+      persist()
+      return
+    }
+
+    if (
+      state.activity === 'pomodoro' &&
+      (state.pomodoroPhase === 'idle' || state.pomodoroPhase === 'restDone')
+    ) {
+      state.dayPeriod = period
+      persist()
+    }
+  }
+
   function checkMorningStart() {
     if (state.date !== getTodayKey()) {
       Object.assign(state, createDefaultState())
+    }
+    if (isTodayPaused()) {
+      activatePauseDayMode()
+      return
     }
     if (isAfterMorningStart() && !state.morningActivated) {
       activateMorningMode()
@@ -743,6 +819,16 @@ export function useTimeManagement() {
     persist()
   }
 
+  function returnToPomodoroFromExercise() {
+    if (!isTodayPaused() || state.activity !== 'exercise') return
+    showExerciseCalorieForm.value = false
+    syncExerciseFromClock()
+    state.exerciseSegmentStartedAt = null
+    enterPauseDayPomodoroIdle()
+    playActivitySwitchSound()
+    persist()
+  }
+
   function openExerciseCalorieForm() {
     if (state.activity !== 'exercise') return
     showExerciseCalorieForm.value = true
@@ -753,10 +839,16 @@ export function useTimeManagement() {
   }
 
   function confirmExerciseEnd(calories: number) {
-    if (state.activity !== 'exercise') return false
+    if (!showExerciseCalorieForm.value) return false
     if (!Number.isFinite(calories) || calories <= 0) return false
 
     showExerciseCalorieForm.value = false
+
+    if (state.activity !== 'exercise') {
+      if (!state.exerciseSegmentStartedAt) return false
+      state.activity = 'exercise'
+    }
+
     finishExercise(Math.round(calories))
     return true
   }
@@ -780,8 +872,7 @@ export function useTimeManagement() {
       })
     }
     if (isTodayPaused()) {
-      state.activity = 'pomodoro'
-      state.pomodoroPhase = 'idle'
+      enterPauseDayPomodoroIdle()
       playActivitySwitchSound()
       persist()
       return
@@ -1100,9 +1191,33 @@ export function useTimeManagement() {
     return ''
   })
 
-  const periodLabel = computed(() => PERIOD_LABELS[state.dayPeriod])
+  const periodLabel = computed(() =>
+    isTodayPaused() ? '休整日' : PERIOD_LABELS[state.dayPeriod],
+  )
+
+  const todayPaused = computed(() => isTodayPaused())
+
+  const pauseDayStatusLabel = computed(() => {
+    if (!isTodayPaused()) return ''
+    if (state.activity === 'exercise') return '锻炼中'
+    switch (state.pomodoroPhase) {
+      case 'studying':
+        return '上课中'
+      case 'studyDone':
+        return '可以下课了'
+      case 'resting':
+        return '休息中'
+      case 'restDone':
+        return '该上课了'
+      default:
+        return '番茄时间'
+    }
+  })
 
   const modeLabel = computed(() => {
+    if (isTodayPaused() && state.activity !== 'before_morning') {
+      return `休整日 · ${pauseDayStatusLabel.value}`
+    }
     if (state.activity === 'before_morning') return '等待早上 9 点开始'
     if (state.activity === 'waiting_meal') return `${periodLabel.value} · 等待用餐`
     if (state.activity === 'free_hour') return `${periodLabel.value} · 自由 1 小时`
@@ -1135,6 +1250,16 @@ export function useTimeManagement() {
 
   const hintText = computed(() => {
     if (!audioUnlockedRef.value) return '请先点击页面任意位置，启用音效'
+    if (isTodayPaused() && state.activity === 'exercise') {
+      return '锻炼结束后点击「锻炼完毕」'
+    }
+    if (
+      isTodayPaused() &&
+      state.activity === 'pomodoro' &&
+      state.pomodoroPhase === 'idle'
+    ) {
+      return '休整日全天可用，点击开始学习'
+    }
     if (state.activity === 'before_morning') return '早上 9 点自动进入番茄学习'
     if (state.activity === 'waiting_meal') return '用餐结束后点击「吃饭完毕」'
     if (state.activity === 'free_hour') return '自由休息，55 分钟后可提前开始学习'
@@ -1216,8 +1341,9 @@ export function useTimeManagement() {
     const actions: { label: string; action: string; disabled?: boolean; hint?: string }[] = []
 
     if (isTodayPaused()) {
-      if (
-        state.activity === 'pomodoro' &&
+      if (state.activity === 'exercise') {
+        actions.push({ label: '返回番茄', action: 'returnPomodoro' })
+      } else if (
         state.pomodoroPhase !== 'studying' &&
         state.pomodoroPhase !== 'resting'
       ) {
@@ -1310,6 +1436,7 @@ export function useTimeManagement() {
     if (action === 'midBreak') startMidBreak()
     if (action === 'relaxedPomodoro') startRelaxedPomodoro()
     if (action === 'exercise') startExercise()
+    if (action === 'returnPomodoro') returnToPomodoroFromExercise()
     if (action === 'labor') openLaborPicker()
     if (action === 'noon') enterNoonMode()
     if (action === 'evening') enterEveningMode()
@@ -1355,13 +1482,27 @@ export function useTimeManagement() {
     syncLegacyTodayCount(getTotalPomodoroCount(state))
   }
 
-  let removeBackgroundListener: (() => void) | null = null
-
-  onMounted(() => {
+  function syncScheduleForToday() {
     bumpClock()
     migratePomodoroSessionState()
     checkMorningStart()
     checkForceRest()
+  }
+
+  function handlePausePeriodsUpdated() {
+    if (applyPauseDaySchedulePatch(state)) {
+      persist()
+    }
+    syncScheduleForToday()
+    resumeTimersAfterLoad()
+  }
+
+  let removeBackgroundListener: (() => void) | null = null
+
+  syncScheduleForToday()
+
+  onMounted(() => {
+    syncScheduleForToday()
     resumeTimersAfterLoad()
     startWatchdog()
     void updateBackgroundSchedule()
@@ -1378,6 +1519,7 @@ export function useTimeManagement() {
     document.addEventListener('visibilitychange', handleVisibilityChange)
     window.addEventListener('focus', handleAppVisible)
     window.addEventListener('pageshow', handleAppVisible)
+    window.addEventListener(PAUSE_PERIODS_UPDATED_EVENT, handlePausePeriodsUpdated)
   })
 
   onUnmounted(() => {
@@ -1388,6 +1530,7 @@ export function useTimeManagement() {
     document.removeEventListener('visibilitychange', handleVisibilityChange)
     window.removeEventListener('focus', handleAppVisible)
     window.removeEventListener('pageshow', handleAppVisible)
+    window.removeEventListener(PAUSE_PERIODS_UPDATED_EVENT, handlePausePeriodsUpdated)
   })
 
   return {
@@ -1416,6 +1559,6 @@ export function useTimeManagement() {
     LABOR_CATEGORY_LABELS,
     backgroundRuntimeEnabled,
     toggleBackgroundRuntime,
-    isTodayPaused,
+    todayPaused,
   }
 }
