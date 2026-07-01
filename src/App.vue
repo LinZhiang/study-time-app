@@ -18,7 +18,11 @@ const pageTitle = computed(() => {
     </header>
 
     <main class="app-main">
-      <RouterView />
+      <RouterView v-slot="{ Component }">
+        <KeepAlive include="TimeManagementView">
+          <component :is="Component" />
+        </KeepAlive>
+      </RouterView>
     </main>
 
     <BottomNav />

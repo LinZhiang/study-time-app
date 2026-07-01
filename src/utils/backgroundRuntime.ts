@@ -1,4 +1,6 @@
 const STORAGE_KEY = 'background-runtime-enabled'
+const LOCAL_TIMER_KEY = 'study-bg-timer-v1'
+export const TIMER_BROADCAST_CHANNEL = 'study-time-timer'
 
 export interface ScheduledTimerJob {
   deadlineAt: number
@@ -13,6 +15,31 @@ export function isBackgroundRuntimeEnabled(): boolean {
 
 export function setBackgroundRuntimeEnabled(enabled: boolean) {
   localStorage.setItem(STORAGE_KEY, enabled ? '1' : '0')
+}
+
+function persistLocalTimerJob(job: ScheduledTimerJob | null) {
+  if (!job) {
+    localStorage.removeItem(LOCAL_TIMER_KEY)
+    return
+  }
+  localStorage.setItem(LOCAL_TIMER_KEY, JSON.stringify(job))
+}
+
+export function readLocalTimerJob(): ScheduledTimerJob | null {
+  try {
+    const raw = localStorage.getItem(LOCAL_TIMER_KEY)
+    if (!raw) return null
+    const data = JSON.parse(raw) as ScheduledTimerJob
+    if (!data?.deadlineAt) return null
+    return data
+  } catch {
+    return null
+  }
+}
+
+export function isLocalTimerOverdue(now = Date.now()) {
+  const job = readLocalTimerJob()
+  return Boolean(job && job.deadlineAt <= now)
 }
 
 export async function requestBackgroundRuntimeSetup(): Promise<{
@@ -47,9 +74,26 @@ export function disableBackgroundRuntime() {
 }
 
 async function postToServiceWorker(data: unknown) {
-  if (!('serviceWorker' in navigator)) return
-  const registration = await navigator.serviceWorker.ready
-  registration.active?.postMessage(data)
+  if (!('serviceWorker' in navigator)) return false
+
+  try {
+    const registration = await navigator.serviceWorker.ready
+    const targets = [
+      registration.active,
+      registration.waiting,
+      registration.installing,
+      navigator.serviceWorker.controller,
+    ].filter(Boolean)
+
+    if (targets.length === 0) return false
+
+    for (const target of targets) {
+      target?.postMessage(data)
+    }
+    return true
+  } catch {
+    return false
+  }
 }
 
 export async function syncScheduledTimer(job: ScheduledTimerJob | null) {
@@ -61,10 +105,13 @@ export async function syncScheduledTimer(job: ScheduledTimerJob | null) {
     await clearScheduledTimer()
     return
   }
+
+  persistLocalTimerJob(job)
   await postToServiceWorker({ type: 'SCHEDULE_TIMER', job })
 }
 
 export async function clearScheduledTimer() {
+  persistLocalTimerJob(null)
   await postToServiceWorker({ type: 'CLEAR_TIMER' })
 }
 
@@ -79,7 +126,19 @@ export function setupBackgroundRuntimeListener(onTimerFired: () => void) {
   }
 
   navigator.serviceWorker.addEventListener('message', handler)
-  return () => navigator.serviceWorker.removeEventListener('message', handler)
+
+  let channel: BroadcastChannel | null = null
+  if (typeof BroadcastChannel !== 'undefined') {
+    channel = new BroadcastChannel(TIMER_BROADCAST_CHANNEL)
+    channel.onmessage = () => {
+      onTimerFired()
+    }
+  }
+
+  return () => {
+    navigator.serviceWorker.removeEventListener('message', handler)
+    channel?.close()
+  }
 }
 
 export function isStandaloneDisplayMode(): boolean {

@@ -1,4 +1,6 @@
 <script setup lang="ts">
+defineOptions({ name: 'TimeManagementView' })
+
 import { computed, ref, watch } from 'vue'
 import { unlockAudio } from '../utils/audio'
 import { LABOR_CATEGORIES, useTimeManagement } from '../composables/useTimeManagement'

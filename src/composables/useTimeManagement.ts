@@ -1,4 +1,4 @@
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, onActivated, onMounted, onUnmounted, reactive, ref } from 'vue'
 import type { LaborCategory } from '../types/labor'
 import { LABOR_CATEGORY_LABELS } from '../types/labor'
 import type { Activity, DayPeriod, PomodoroPhase } from '../types/schedule'
@@ -35,6 +35,8 @@ import {
   clearScheduledTimer,
   disableBackgroundRuntime,
   isBackgroundRuntimeEnabled,
+  isLocalTimerOverdue,
+  readLocalTimerJob,
   requestBackgroundRuntimeSetup,
   setupBackgroundRuntimeListener,
   syncScheduledTimer,
@@ -101,6 +103,28 @@ export function useTimeManagement() {
   let tickId: ReturnType<typeof setInterval> | null = null
   let watchdogId: ReturnType<typeof setInterval> | null = null
   let countdownOnComplete: (() => void) | null = null
+  let lastPomodoroPeriodEndSound: 'studying' | 'resting' | null = null
+
+  function resetPomodoroPeriodEndSound() {
+    lastPomodoroPeriodEndSound = null
+  }
+
+  /** 学习/休息倒计时结束时播放 开始.wav（与自由时间 55 分钟提醒同音） */
+  function playPomodoroPeriodEndedSound(phase: 'studying' | 'resting') {
+    if (lastPomodoroPeriodEndSound === phase) return
+    lastPomodoroPeriodEndSound = phase
+    unlockAudio()
+    playReminderSound()
+  }
+
+  function maybePlayPomodoroPeriodEndedSound() {
+    if (getCountdownRemaining() > 0) return
+    if (state.pomodoroPhase === 'studying') {
+      playPomodoroPeriodEndedSound('studying')
+    } else if (state.pomodoroPhase === 'resting') {
+      playPomodoroPeriodEndedSound('resting')
+    }
+  }
 
   function bumpClock() {
     clockNow.value = Date.now()
@@ -229,13 +253,12 @@ export function useTimeManagement() {
     })
   }
 
-  function stopTimer() {
-    if (timerId !== null) {
-      clearInterval(timerId)
-      timerId = null
-    }
+  function stopTimer(options?: { keepBackgroundSchedule?: boolean }) {
+    pauseTimerLoopOnly()
     countdownOnComplete = null
-    void clearScheduledTimer()
+    if (!options?.keepBackgroundSchedule) {
+      void clearScheduledTimer()
+    }
   }
 
   function clearCountdownDeadline() {
@@ -274,7 +297,7 @@ export function useTimeManagement() {
   }
 
   function beginCountdown(seconds: number, onComplete: () => void) {
-    stopTimer()
+    pauseTimerLoopOnly()
     countdownOnComplete = onComplete
     state.timerDeadlineAt = Date.now() + seconds * 1000
     syncStoredRemainingFromDeadline()
@@ -301,11 +324,8 @@ export function useTimeManagement() {
       tickFreeHour()
 
       if (getCountdownRemaining() <= 0) {
-        state.timerDeadlineAt = null
-        const done = countdownOnComplete
-        stopTimer()
-        persist()
-        done?.()
+        maybePlayPomodoroPeriodEndedSound()
+        processDueCountdowns(1)
         return
       }
       persist()
@@ -316,15 +336,7 @@ export function useTimeManagement() {
 
   function syncAllFromClock() {
     bumpClock()
-
-    if (state.timerDeadlineAt && state.timerDeadlineAt <= Date.now()) {
-      state.timerDeadlineAt = null
-      const done = countdownOnComplete ?? resolveCountdownOnComplete()
-      stopTimer()
-      persist()
-      done?.()
-      return
-    }
+    processDueCountdowns()
 
     if (state.timerDeadlineAt) {
       countdownOnComplete = countdownOnComplete ?? resolveCountdownOnComplete()
@@ -390,22 +402,50 @@ export function useTimeManagement() {
     state.studySegmentStartedAt = null
   }
 
-  function handleAppVisible() {
+  function handleAppVisible(options?: { notifyIfMissed?: boolean }) {
     checkMorningStart()
+    const overdueByState =
+      Boolean(state.timerDeadlineAt && state.timerDeadlineAt <= Date.now()) ||
+      (!state.timerDeadlineAt &&
+        getStoredRemainingSeconds() <= 0 &&
+        resolveCountdownOnComplete() !== null)
+    const shouldNotifyMissed =
+      options?.notifyIfMissed === true &&
+      (isLocalTimerOverdue() || overdueByState)
+    const notifyBody = shouldNotifyMissed
+      ? (readLocalTimerJob()?.body ?? getTimerNotificationBody())
+      : null
+
     syncAllFromClock()
+
+    if (notifyBody && isBackgroundRuntimeEnabled()) {
+      showFallbackTimerNotification(notifyBody)
+    }
     if (isTimerActive()) {
       if (!countdownOnComplete && state.timerDeadlineAt) {
         countdownOnComplete = resolveCountdownOnComplete()
       }
       ensureTimerLoop()
+      void updateBackgroundSchedule()
+    } else if (overdueByState || isLocalTimerOverdue()) {
+      resumeTimersAfterLoad()
     }
+  }
+
+  function handleBackgroundTimerEvent() {
+    syncAllFromClock()
+    if (!countdownOnComplete && state.timerDeadlineAt) {
+      countdownOnComplete = resolveCountdownOnComplete()
+    }
+    ensureTimerLoop()
+    void updateBackgroundSchedule()
+    bumpClock()
   }
 
   function handleAppHidden() {
     persist()
-    if (isBackgroundRuntimeEnabled() && isTimerActive()) {
+    if (isBackgroundRuntimeEnabled() && state.timerDeadlineAt) {
       void updateBackgroundSchedule()
-      ensureTimerLoop()
     }
   }
 
@@ -450,20 +490,89 @@ export function useTimeManagement() {
     return null
   }
 
-  function resumeTimersAfterLoad() {
-    if (state.timerDeadlineAt && state.timerDeadlineAt <= Date.now()) {
+  function pauseTimerLoopOnly() {
+    if (timerId !== null) {
+      clearInterval(timerId)
+      timerId = null
+    }
+  }
+
+  function showFallbackTimerNotification(body = getTimerNotificationBody()) {
+    if (!isBackgroundRuntimeEnabled()) return
+    if (!('Notification' in window) || Notification.permission !== 'granted') return
+    try {
+      new Notification('自学时间', {
+        body,
+        tag: 'study-countdown',
+      })
+    } catch {
+      // ignore
+    }
+  }
+
+  function completeDueCountdownStep(): boolean {
+    const deadlineDue = Boolean(state.timerDeadlineAt && state.timerDeadlineAt <= Date.now())
+    const remainingExpired =
+      !state.timerDeadlineAt &&
+      getStoredRemainingSeconds() <= 0 &&
+      resolveCountdownOnComplete() !== null
+
+    if (!deadlineDue && !remainingExpired) return false
+
+    if (deadlineDue) {
+      if (state.pomodoroPhase === 'studying') {
+        playPomodoroPeriodEndedSound('studying')
+      } else if (state.pomodoroPhase === 'resting') {
+        playPomodoroPeriodEndedSound('resting')
+      }
       state.timerDeadlineAt = null
-      const done = resolveCountdownOnComplete()
-      if (done) {
-        done()
-        return
+    } else if (remainingExpired) {
+      if (state.pomodoroPhase === 'studying') {
+        playPomodoroPeriodEndedSound('studying')
+      } else if (state.pomodoroPhase === 'resting') {
+        playPomodoroPeriodEndedSound('resting')
       }
     }
+
+    const done = countdownOnComplete ?? resolveCountdownOnComplete()
+    countdownOnComplete = null
+    pauseTimerLoopOnly()
+
+    if (!done) {
+      persist()
+      return false
+    }
+
+    done()
+    persist()
+    return true
+  }
+
+  function processDueCountdowns(maxSteps = 10) {
+    let advanced = false
+
+    for (let step = 0; step < maxSteps; step++) {
+      if (!completeDueCountdownStep()) break
+      advanced = true
+    }
+
+    if (advanced) {
+      void updateBackgroundSchedule()
+      ensureTimerLoop()
+      bumpClock()
+    }
+
+    return advanced
+  }
+
+  function resumeTimersAfterLoad() {
+    processDueCountdowns()
 
     if (state.timerDeadlineAt) {
       countdownOnComplete = resolveCountdownOnComplete() ?? null
       syncStoredRemainingFromDeadline()
       ensureTimerLoop()
+      void updateBackgroundSchedule()
     } else {
       const done = resolveCountdownOnComplete()
       const remaining = getStoredRemainingSeconds()
@@ -651,7 +760,7 @@ export function useTimeManagement() {
     pauseStudySegment()
     state.pomodoroPhase = 'studyDone'
     state.pomodoroRemaining = STUDY_DONE_GRACE_SECONDS
-    playPomodoroSound(sounds.start)
+    playPomodoroPeriodEndedSound('studying')
     const recordingPeriod = state.activePomodoroPeriod
     if (recordingPeriod && isPomodoroPeriod(recordingPeriod)) {
       appendActivityLog({
@@ -668,7 +777,7 @@ export function useTimeManagement() {
   function onRestFinished() {
     state.pomodoroPhase = 'restDone'
     state.pomodoroRemaining = REST_DONE_GRACE_SECONDS
-    playPomodoroSound(sounds.start)
+    playPomodoroPeriodEndedSound('resting')
     const recordingPeriod = state.activePomodoroPeriod
     if (recordingPeriod && isPomodoroPeriod(recordingPeriod)) {
       appendActivityLog({
@@ -684,6 +793,7 @@ export function useTimeManagement() {
 
   function startStudy(fromModeSwitch = false) {
     stopTimer()
+    resetPomodoroPeriodEndSound()
     state.activity = 'pomodoro'
     state.pomodoroPhase = 'studying'
     state.pomodoroRemaining = STUDY_SECONDS
@@ -741,6 +851,7 @@ export function useTimeManagement() {
 
     state.pomodoroPhase = 'resting'
     state.pomodoroRemaining = REST_SECONDS
+    resetPomodoroPeriodEndSound()
     playPomodoroSound(sounds.classEnd)
     startCountdown(onRestFinished)
     persist()
@@ -824,6 +935,18 @@ export function useTimeManagement() {
     showExerciseCalorieForm.value = false
     syncExerciseFromClock()
     state.exerciseSegmentStartedAt = null
+    enterPauseDayPomodoroIdle()
+    playActivitySwitchSound()
+    persist()
+  }
+
+  function exitPauseDayPomodoro() {
+    if (!isTodayPaused() || state.activity !== 'pomodoro') return
+    if (state.pomodoroPhase === 'idle') return
+
+    stopTimer()
+    clearCountdownDeadline()
+    pauseStudySegment()
     enterPauseDayPomodoroIdle()
     playActivitySwitchSound()
     persist()
@@ -1260,6 +1383,13 @@ export function useTimeManagement() {
     ) {
       return '休整日全天可用，点击开始学习'
     }
+    if (
+      isTodayPaused() &&
+      state.activity === 'pomodoro' &&
+      state.pomodoroPhase !== 'idle'
+    ) {
+      return '可随时「退出番茄」或切换锻炼'
+    }
     if (state.activity === 'before_morning') return '早上 9 点自动进入番茄学习'
     if (state.activity === 'waiting_meal') return '用餐结束后点击「吃饭完毕」'
     if (state.activity === 'free_hour') return '自由休息，55 分钟后可提前开始学习'
@@ -1343,11 +1473,21 @@ export function useTimeManagement() {
     if (isTodayPaused()) {
       if (state.activity === 'exercise') {
         actions.push({ label: '返回番茄', action: 'returnPomodoro' })
-      } else if (
-        state.pomodoroPhase !== 'studying' &&
-        state.pomodoroPhase !== 'resting'
-      ) {
-        actions.push({ label: '开始锻炼', action: 'exercise' })
+      } else if (state.activity === 'pomodoro') {
+        if (
+          state.pomodoroPhase === 'studying' ||
+          state.pomodoroPhase === 'resting' ||
+          state.pomodoroPhase === 'studyDone' ||
+          state.pomodoroPhase === 'restDone'
+        ) {
+          actions.push({ label: '退出番茄', action: 'exitPomodoro' })
+        }
+        if (
+          state.pomodoroPhase !== 'studying' &&
+          state.pomodoroPhase !== 'resting'
+        ) {
+          actions.push({ label: '开始锻炼', action: 'exercise' })
+        }
       }
       return actions
     }
@@ -1437,6 +1577,7 @@ export function useTimeManagement() {
     if (action === 'relaxedPomodoro') startRelaxedPomodoro()
     if (action === 'exercise') startExercise()
     if (action === 'returnPomodoro') returnToPomodoroFromExercise()
+    if (action === 'exitPomodoro') exitPauseDayPomodoro()
     if (action === 'labor') openLaborPicker()
     if (action === 'noon') enterNoonMode()
     if (action === 'evening') enterEveningMode()
@@ -1456,8 +1597,12 @@ export function useTimeManagement() {
     void updateBackgroundSchedule()
   }
 
+  function handleWindowFocus() {
+    handleAppVisible({ notifyIfMissed: true })
+  }
+
   function handleVisibilityChange() {
-    if (document.visibilityState === 'visible') handleAppVisible()
+    if (document.visibilityState === 'visible') handleAppVisible({ notifyIfMissed: true })
     else handleAppHidden()
   }
 
@@ -1501,6 +1646,10 @@ export function useTimeManagement() {
 
   syncScheduleForToday()
 
+  onActivated(() => {
+    handleAppVisible({ notifyIfMissed: true })
+  })
+
   onMounted(() => {
     syncScheduleForToday()
     resumeTimersAfterLoad()
@@ -1508,7 +1657,7 @@ export function useTimeManagement() {
     void updateBackgroundSchedule()
 
     removeBackgroundListener = setupBackgroundRuntimeListener(() => {
-      handleAppVisible()
+      handleBackgroundTimerEvent()
     })
 
     tickId = setInterval(() => {
@@ -1517,19 +1666,26 @@ export function useTimeManagement() {
     }, 30_000)
 
     document.addEventListener('visibilitychange', handleVisibilityChange)
-    window.addEventListener('focus', handleAppVisible)
-    window.addEventListener('pageshow', handleAppVisible)
+    window.addEventListener('focus', handleWindowFocus)
+    window.addEventListener('pageshow', handleWindowFocus)
     window.addEventListener(PAUSE_PERIODS_UPDATED_EVENT, handlePausePeriodsUpdated)
   })
 
   onUnmounted(() => {
-    stopTimer()
+    pauseTimerLoopOnly()
+    countdownOnComplete = null
     stopWatchdog()
+    persist()
+    if (isBackgroundRuntimeEnabled() && state.timerDeadlineAt) {
+      void updateBackgroundSchedule()
+    } else {
+      void clearScheduledTimer()
+    }
     if (tickId) clearInterval(tickId)
     removeBackgroundListener?.()
     document.removeEventListener('visibilitychange', handleVisibilityChange)
-    window.removeEventListener('focus', handleAppVisible)
-    window.removeEventListener('pageshow', handleAppVisible)
+    window.removeEventListener('focus', handleWindowFocus)
+    window.removeEventListener('pageshow', handleWindowFocus)
     window.removeEventListener(PAUSE_PERIODS_UPDATED_EVENT, handlePausePeriodsUpdated)
   })
 
