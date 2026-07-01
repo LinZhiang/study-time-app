@@ -44,6 +44,12 @@ const router = createRouter({
       meta: { title: '休整日' },
     },
     {
+      path: '/settings',
+      name: 'settings',
+      component: () => import('../views/SettingsView.vue'),
+      meta: { title: '设置' },
+    },
+    {
       path: '/progress',
       redirect: '/daily',
     },

@@ -1,51 +1,23 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
-import { isStandaloneDisplayMode } from '../utils/backgroundRuntime'
+import { usePwaInstall } from '../utils/pwaInstall'
 
-const visible = ref(false)
-const deferredPrompt = ref<BeforeInstallPromptEvent | null>(null)
-
-interface BeforeInstallPromptEvent extends Event {
-  prompt: () => Promise<void>
-  userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>
-}
-
-function onBeforeInstallPrompt(event: Event) {
-  event.preventDefault()
-  deferredPrompt.value = event as BeforeInstallPromptEvent
-  if (!isStandaloneDisplayMode()) {
-    visible.value = true
-  }
-}
+const { showInstallBanner, promptPwaInstall, dismissInstallBanner } = usePwaInstall()
 
 async function installApp() {
-  const prompt = deferredPrompt.value
-  if (!prompt) return
-  await prompt.prompt()
-  await prompt.userChoice
-  visible.value = false
-  deferredPrompt.value = null
+  await promptPwaInstall()
 }
-
-function dismissBanner() {
-  visible.value = false
-}
-
-onMounted(() => {
-  window.addEventListener('beforeinstallprompt', onBeforeInstallPrompt)
-})
-
-onUnmounted(() => {
-  window.removeEventListener('beforeinstallprompt', onBeforeInstallPrompt)
-})
 </script>
 
 <template>
-  <div v-if="visible" class="pwa-install-banner">
+  <div v-if="showInstallBanner" class="pwa-install-banner">
     <p class="pwa-install-banner__text">安装到主屏幕，使用更方便</p>
     <div class="pwa-install-banner__actions">
-      <button class="btn btn--ghost btn--small" type="button" @click="dismissBanner">稍后</button>
-      <button class="btn btn--primary btn--small" type="button" @click="installApp">安装</button>
+      <button class="btn btn--ghost btn--small" type="button" @click="dismissInstallBanner">
+        稍后
+      </button>
+      <button class="btn btn--primary btn--small" type="button" @click="installApp">
+        安装
+      </button>
     </div>
   </div>
 </template>

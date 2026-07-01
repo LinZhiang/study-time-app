@@ -10,6 +10,7 @@ const tabs = [
   { path: '/study', label: '学习记录', icon: 'study' },
   { path: '/pause', label: '休整日', icon: 'pause' },
   { path: '/logs', label: '查看日志', icon: 'logs' },
+  { path: '/settings', label: '设置', icon: 'settings' },
 ]
 
 function isActive(path: string) {
