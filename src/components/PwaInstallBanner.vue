@@ -1,23 +1,48 @@
 <script setup lang="ts">
+import { RouterLink } from 'vue-router'
 import { usePwaInstall } from '../utils/pwaInstall'
 
-const { showInstallBanner, promptPwaInstall, dismissInstallBanner } = usePwaInstall()
+const {
+  showInstallBanner,
+  canPromptInstall,
+  browserInstallInfo,
+  promptPwaInstall,
+  dismissInstallBanner,
+} = usePwaInstall()
 
 async function installApp() {
-  await promptPwaInstall()
+  if (canPromptInstall.value) {
+    await promptPwaInstall()
+  }
 }
 </script>
 
 <template>
   <div v-if="showInstallBanner" class="pwa-install-banner">
-    <p class="pwa-install-banner__text">安装到主屏幕，使用更方便</p>
+    <p class="pwa-install-banner__text">
+      {{
+        canPromptInstall
+          ? '安装到主屏幕，使用更方便'
+          : browserInstallInfo.isHuaweiBrowser
+            ? '华为浏览器：请点菜单 → 添加到主屏幕'
+            : '请从浏览器菜单添加到主屏幕'
+      }}
+    </p>
     <div class="pwa-install-banner__actions">
       <button class="btn btn--ghost btn--small" type="button" @click="dismissInstallBanner">
         稍后
       </button>
-      <button class="btn btn--primary btn--small" type="button" @click="installApp">
+      <button
+        v-if="canPromptInstall"
+        class="btn btn--primary btn--small"
+        type="button"
+        @click="installApp"
+      >
         安装
       </button>
+      <RouterLink v-else class="btn btn--primary btn--small" to="/settings">
+        查看步骤
+      </RouterLink>
     </div>
   </div>
 </template>
@@ -41,7 +66,8 @@ async function installApp() {
 
 .pwa-install-banner__text {
   margin: 0;
-  font-size: 14px;
+  font-size: 13px;
+  line-height: 1.4;
   color: var(--color-text);
 }
 
@@ -49,5 +75,10 @@ async function installApp() {
   display: flex;
   gap: 8px;
   flex-shrink: 0;
+}
+
+.pwa-install-banner__actions .btn {
+  text-decoration: none;
+  white-space: nowrap;
 }
 </style>

@@ -6,6 +6,8 @@ const {
   canPromptInstall,
   installUiStatus,
   installStatusHint,
+  manualInstallSteps,
+  browserInstallInfo,
   refreshInstalledState,
   promptPwaInstall,
 } = usePwaInstall()
@@ -43,7 +45,8 @@ refresh()
         :class="{
           'settings-status--ok': installUiStatus === 'installed',
           'settings-status--ready': installUiStatus === 'ready',
-          'settings-status--wait': installUiStatus === 'waiting_browser' || installUiStatus === 'preparing',
+          'settings-status--wait':
+            installUiStatus === 'manual' || installUiStatus === 'preparing',
           'settings-status--error': installUiStatus === 'error',
         }"
       >
@@ -53,23 +56,33 @@ refresh()
               ? '已安装'
               : installUiStatus === 'ready'
                 ? '可以安装'
-                : installUiStatus === 'error'
-                  ? '准备失败'
-                  : '准备中'
+                : installUiStatus === 'manual'
+                  ? '请手动添加'
+                  : installUiStatus === 'error'
+                    ? '准备失败'
+                    : '准备中'
           }}
         </p>
         <p class="settings-status__text">{{ installStatusHint }}</p>
       </div>
 
       <button
-        v-if="installUiStatus !== 'installed'"
+        v-if="installUiStatus === 'ready'"
         class="btn btn--primary btn--large settings-section__action"
         type="button"
-        :disabled="!canPromptInstall || installLoading"
+        :disabled="installLoading"
         @click="handleInstall"
       >
         {{ installLoading ? '处理中…' : '安装到主屏幕' }}
       </button>
+
+      <ol v-if="installUiStatus === 'manual'" class="settings-steps">
+        <li v-for="(step, index) in manualInstallSteps" :key="index">{{ step }}</li>
+      </ol>
+
+      <p v-if="installUiStatus === 'manual' && browserInstallInfo.isHuaweiBrowser" class="settings-tip">
+        若菜单里没有「添加到主屏幕」，请安装 <strong>Chrome 浏览器</strong>，用 Chrome 打开本页后再试；Chrome 通常支持一键安装。
+      </p>
     </section>
   </div>
 </template>
@@ -148,5 +161,31 @@ refresh()
   font-size: 13px;
   line-height: 1.6;
   color: var(--color-text-secondary);
+}
+
+.settings-steps {
+  margin: 0;
+  padding-left: 20px;
+  font-size: 14px;
+  line-height: 1.8;
+  color: var(--color-text);
+}
+
+.settings-steps li + li {
+  margin-top: 8px;
+}
+
+.settings-tip {
+  margin: 14px 0 0;
+  padding: 12px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--color-text-secondary);
+  background: rgba(255, 193, 7, 0.1);
+  border-radius: var(--radius-md);
+}
+
+.settings-tip strong {
+  color: var(--color-text);
 }
 </style>
