@@ -2,7 +2,13 @@
 import { onActivated, ref } from 'vue'
 import { usePwaInstall } from '../utils/pwaInstall'
 
-const { canPromptInstall, isInstalled, refreshInstalledState, promptPwaInstall } = usePwaInstall()
+const {
+  canPromptInstall,
+  installUiStatus,
+  installStatusHint,
+  refreshInstalledState,
+  promptPwaInstall,
+} = usePwaInstall()
 
 const installLoading = ref(false)
 
@@ -32,24 +38,38 @@ refresh()
         安装到主屏幕后，可像 App 一样全屏使用，计时与通知更稳定。
       </p>
 
-      <div v-if="isInstalled" class="settings-status settings-status--ok">
-        <p class="settings-status__title">已安装</p>
-        <p class="settings-status__text">当前已从主屏幕或独立窗口打开。</p>
+      <div
+        class="settings-status"
+        :class="{
+          'settings-status--ok': installUiStatus === 'installed',
+          'settings-status--ready': installUiStatus === 'ready',
+          'settings-status--wait': installUiStatus === 'waiting_browser' || installUiStatus === 'preparing',
+          'settings-status--error': installUiStatus === 'error',
+        }"
+      >
+        <p class="settings-status__title">
+          {{
+            installUiStatus === 'installed'
+              ? '已安装'
+              : installUiStatus === 'ready'
+                ? '可以安装'
+                : installUiStatus === 'error'
+                  ? '准备失败'
+                  : '准备中'
+          }}
+        </p>
+        <p class="settings-status__text">{{ installStatusHint }}</p>
       </div>
 
-      <template v-else>
-        <button
-          class="btn btn--primary btn--large settings-section__action"
-          type="button"
-          :disabled="!canPromptInstall || installLoading"
-          @click="handleInstall"
-        >
-          {{ installLoading ? '处理中…' : '安装到主屏幕' }}
-        </button>
-        <p v-if="!canPromptInstall" class="settings-section__hint">
-          安装提示尚未就绪，请刷新页面后再试（与底部安装条相同的一键安装）。
-        </p>
-      </template>
+      <button
+        v-if="installUiStatus !== 'installed'"
+        class="btn btn--primary btn--large settings-section__action"
+        type="button"
+        :disabled="!canPromptInstall || installLoading"
+        @click="handleInstall"
+      >
+        {{ installLoading ? '处理中…' : '安装到主屏幕' }}
+      </button>
     </section>
   </div>
 </template>
@@ -91,22 +111,30 @@ refresh()
   width: 100%;
 }
 
-.settings-section__hint {
-  margin: 12px 0 0;
-  font-size: 13px;
-  line-height: 1.6;
-  color: var(--color-text-secondary);
-  text-align: center;
-}
-
 .settings-status {
   padding: 14px;
   border-radius: var(--radius-md);
+  margin-bottom: 16px;
 }
 
 .settings-status--ok {
   background: rgba(26, 107, 92, 0.08);
   border: 1px solid rgba(26, 107, 92, 0.2);
+}
+
+.settings-status--ready {
+  background: rgba(26, 107, 92, 0.08);
+  border: 1px solid rgba(26, 107, 92, 0.25);
+}
+
+.settings-status--wait {
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+}
+
+.settings-status--error {
+  background: rgba(198, 40, 40, 0.06);
+  border: 1px solid rgba(198, 40, 40, 0.2);
 }
 
 .settings-status__title {

@@ -7,7 +7,7 @@ export default defineConfig({
     vue(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.svg', 'study-icon.svg'],
+      includeAssets: ['favicon.svg', 'study-icon.svg', 'pwa-192x192.png', 'pwa-512x512.png'],
       strategies: 'injectManifest',
       srcDir: 'src',
       filename: 'sw.ts',
@@ -24,16 +24,28 @@ export default defineConfig({
         lang: 'zh-CN',
         icons: [
           {
-            src: 'study-icon.svg',
-            sizes: '512x512',
-            type: 'image/svg+xml',
+            src: 'pwa-192x192.png',
+            sizes: '192x192',
+            type: 'image/png',
             purpose: 'any',
+          },
+          {
+            src: 'pwa-512x512.png',
+            sizes: '512x512',
+            type: 'image/png',
+            purpose: 'any',
+          },
+          {
+            src: 'pwa-512x512.png',
+            sizes: '512x512',
+            type: 'image/png',
+            purpose: 'maskable',
           },
           {
             src: 'study-icon.svg',
             sizes: '512x512',
             type: 'image/svg+xml',
-            purpose: 'maskable',
+            purpose: 'any',
           },
         ],
       },
