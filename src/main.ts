@@ -5,11 +5,10 @@ import router from './router'
 import './styles/global.css'
 import { setupGlobalAudioUnlock } from './utils/audio'
 import { setupDailyStarsSync } from './utils/dailyStarsArchive'
-import { initPwaInstall } from './utils/pwaInstall'
+import './utils/pwaInstall'
 
 setupGlobalAudioUnlock()
 setupDailyStarsSync()
-initPwaInstall()
 
 registerSW({ immediate: true })
 
