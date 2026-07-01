@@ -9,6 +9,7 @@ interface TimerJob {
   title: string
   body: string
   tag: string
+  kind?: 'countdown' | 'morning_start' | 'force_rest'
 }
 
 const TIMER_CACHE = 'study-timer-v1'

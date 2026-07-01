@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onActivated, ref } from 'vue'
 import type { DailyStarsDisplayState, StaminaManualStars } from '../types/dailyStars'
-import { STAMINA_CALORIE_THRESHOLD } from '../types/dailyStars'
+import { DAILY_STARS_START_DATE, STAMINA_CALORIE_THRESHOLD } from '../types/dailyStars'
 import { MONEY_BASE_BALANCE, MONEY_DAILY_INCREMENT } from '../types/moneySpend'
 import {
   calculateStaminaAutoStars,
@@ -16,6 +16,7 @@ import {
   getDailyStarsDisplayState,
 } from '../utils/dailyStarsArchive'
 import { formatPauseDateLabel } from '../utils/pausePeriod'
+import { getTodayKey } from '../utils/scheduleStorage'
 import { loadTodayStaminaManual, setTodayStaminaManual } from '../utils/staminaRecord'
 import {
   formatMoneyAmount,
@@ -95,12 +96,6 @@ const staminaStarsDisplay = computed(() => {
   const preview = calculateStaminaAutoStars(todayExerciseCalories.value) + manualStaminaStars.value
   return formatStarCount(preview, 2)
 })
-const cleanlinessStarsDisplay = computed(() => {
-  if (breakdown.value) {
-    return formatStarCount(breakdown.value.cleanlinessStars, 1)
-  }
-  return formatStarCount(cleanlinessMaintained.value ? 1 : 0, 1)
-})
 const perseveranceMetaDisplay = computed(() =>
   breakdown.value ? `运动 ${exerciseDurationDisplay.value} · 学习 ${studyDurationDisplay.value}` : '',
 )
@@ -128,7 +123,7 @@ const headerSubtitle = computed(() => {
 
 const pendingMessage = computed(() => {
   if (displayState.value.status === 'paused_today') {
-    return '今天为休整日：日常星级暂停结算，番茄与锻炼仍单独统计。'
+    return '今天为休整日：日常星级暂停结算，番茄与锻炼仍单独统计。下方仍可填写今日需手动记录的项目。'
   }
   if (displayState.value.status === 'paused_yesterday') {
     return `${formatPauseDateLabel(displayState.value.date)} 为休整日，无日常星级结算（番茄与锻炼见日常记录/日志）。`
@@ -137,18 +132,35 @@ const pendingMessage = computed(() => {
     return `日常星级自 ${formatDailyStarsStartDate(displayState.value.startDate)} 起统计（不含 6 月 29 日）。当日 24:00 结束后才会生成星级，今日暂不可查看。`
   }
   if (displayState.value.status === 'waiting_day_end') {
-    return '今日数据仍在累计中。请等到当天 24:00 结束后，次日在此查看已结算的日常星级。'
+    return '今日数据仍在累计中。自动计星须等 24:00 后结算；体力、洁净力、金钱等可在此随时填写。'
+  }
+  if (displayState.value.status === 'ready') {
+    return `上方为 ${formatArchivedDateLabel(displayState.value.date)} 已结算星级；下方为今日待填写/累计项。`
   }
   return ''
 })
 
-const showStaminaManualPanel = computed(
-  () => displayState.value.status === 'waiting_day_end',
+/** 统计已开始且今日可填写手动项时，始终展示打星/记录面板 */
+const showManualInputPanels = computed(
+  () => getTodayKey() >= DAILY_STARS_START_DATE,
 )
 
-const showMoneyPanel = computed(() => displayState.value.status === 'waiting_day_end')
+const todayStaminaPreview = computed(() => {
+  const auto = calculateStaminaAutoStars(todayExerciseCalories.value)
+  const total = auto + manualStaminaStars.value
+  const parts = [`大卡 ${formatExerciseCalories(todayExerciseCalories.value)}`]
+  if (auto > 0) parts.push('预计自动 +1')
+  if (manualStaminaStars.value === 1) parts.push('手动 +1')
+  if (manualStaminaStars.value === -1) parts.push('手动 −1')
+  return {
+    starsDisplay: formatStarCount(total, 2),
+    meta: parts.join(' · '),
+  }
+})
 
-const showCleanlinessPanel = computed(() => displayState.value.status === 'waiting_day_end')
+const todayCleanlinessPreview = computed(() =>
+  formatStarCount(cleanlinessMaintained.value ? 1 : 0, 1),
+)
 
 const moneyMetaDisplay = computed(() => {
   if (breakdown.value) {
@@ -222,20 +234,22 @@ refresh()
 
 <template>
   <div class="page stars-page">
-    <section v-if="displayState.status !== 'ready'" class="card pending-card">
-      <h2 class="pending-card__title">尚未结算</h2>
-      <p class="pending-card__text">{{ pendingMessage }}</p>
+    <section v-if="showManualInputPanels" class="card today-input-header">
+      <h2 class="today-input-header__title">今日记录</h2>
+      <p class="today-input-header__hint">
+        体力、洁净力、金钱等需自行填写，当日可随时修改，日终结算时一并归档。
+      </p>
     </section>
 
-    <section v-if="showStaminaManualPanel" class="card stamina-panel">
+    <section v-if="showManualInputPanels" class="card stamina-panel">
       <h3 class="stamina-panel__title">体力 · 手动调整</h3>
       <p class="stamina-panel__hint">
         日终结算时，运动大卡 ≥{{ STAMINA_CALORIE_THRESHOLD }} 自动 +1 星。你可补充记录昨晚休息情况：
       </p>
       <div class="stamina-panel__preview">
         <span class="stamina-panel__preview-label">当前预计</span>
-        <span class="stamina-panel__preview-stars">{{ staminaStarsDisplay }}</span>
-        <span class="stamina-panel__preview-meta">{{ staminaMetaDisplay }}</span>
+        <span class="stamina-panel__preview-stars">{{ todayStaminaPreview.starsDisplay }}</span>
+        <span class="stamina-panel__preview-meta">{{ todayStaminaPreview.meta }}</span>
       </div>
       <div class="stamina-panel__actions">
         <button
@@ -265,7 +279,7 @@ refresh()
       </div>
     </section>
 
-    <section v-if="showMoneyPanel" class="card money-panel">
+    <section v-if="showManualInputPanels" class="card money-panel">
       <h3 class="money-panel__title">金钱消费</h3>
       <p class="money-panel__hint">
         默认 {{ MONEY_BASE_BALANCE }} 元，每日固定 +{{ MONEY_DAILY_INCREMENT }} 元。今日消费可多次提交，金额累加；无消费请在未记账时确认。
@@ -331,13 +345,13 @@ refresh()
       </button>
     </section>
 
-    <section v-if="showCleanlinessPanel" class="card cleanliness-panel">
+    <section v-if="showManualInputPanels" class="card cleanliness-panel">
       <h3 class="cleanliness-panel__title">洁净力</h3>
       <p class="cleanliness-panel__hint">
         记录今日个人卫生与居住环境打理情况，完成日常清洁 +1 星。
       </p>
       <div class="cleanliness-panel__preview">
-        <span class="cleanliness-panel__stars">{{ cleanlinessStarsDisplay }}</span>
+        <span class="cleanliness-panel__stars">{{ todayCleanlinessPreview }}</span>
         <span class="cleanliness-panel__status">
           {{ cleanlinessMaintained ? '今日已打理' : '今日未标记打理' }}
         </span>
@@ -350,6 +364,13 @@ refresh()
       >
         {{ cleanlinessMaintained ? '取消今日打理标记' : '标记今日已完成清洁卫生打理' }}
       </button>
+    </section>
+
+    <section v-if="pendingMessage" class="card pending-card">
+      <h2 class="pending-card__title">
+        {{ displayState.status === 'ready' ? '结算说明' : '尚未结算' }}
+      </h2>
+      <p class="pending-card__text">{{ pendingMessage }}</p>
     </section>
 
     <section v-if="displayState.status === 'ready'" class="card daily-stars">
@@ -446,8 +467,7 @@ refresh()
       <h3 class="tip-card__title">说明</h3>
       <ul class="tip-card__list">
         <li>自 6 月 30 日起统计，6 月 29 日不计入星级</li>
-        <li>当天进行中的数据不会实时计星，须等 24:00 结束后于次日查看</li>
-        <li>体力手动调整、金钱消费记录可在当日结算前填写，与日终数据一并归档</li>
+        <li>当天进行中的自动计星须等 24:00 后结算；体力、洁净力、金钱可随时在上方填写</li>
         <li>金钱：初始 {{ MONEY_BASE_BALANCE }} 元，每日 +{{ MONEY_DAILY_INCREMENT }} 元；有消费须提交</li>
         <li>洁净力：标记当日完成清洁卫生打理 +1 星</li>
         <li>劳动 0～2 星，锻炼大卡 −1～2 星，毅力 −1～1 星，体力 −1～2 星，洁净力 0～1 星</li>
@@ -475,6 +495,23 @@ refresh()
 .pending-card {
   padding: 24px 20px;
   text-align: center;
+}
+
+.today-input-header {
+  padding: 18px 16px;
+}
+
+.today-input-header__title {
+  margin: 0 0 8px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.today-input-header__hint {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--color-text-secondary);
 }
 
 .pending-card__title {

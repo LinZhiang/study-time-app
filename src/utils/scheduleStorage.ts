@@ -72,6 +72,7 @@ export function createDefaultState(): ScheduleState {
     laborResumeFreeHourRemaining: null,
     laborResumeFreeHourPromptShown: false,
     laborResumeNightRestRemaining: null,
+    countdownEndingReminderKey: null,
   }
 }
 
@@ -105,6 +106,7 @@ export function loadScheduleState(): ScheduleState {
       laborResumeNightRestRemaining: data.laborResumeNightRestRemaining ?? null,
       laborSeconds: data.laborSeconds ?? 0,
       studySeconds: data.studySeconds ?? 0,
+      countdownEndingReminderKey: data.countdownEndingReminderKey ?? null,
     }
   } catch {
     return createDefaultState()
@@ -128,9 +130,25 @@ export function isAfterMorningStart() {
   return hour > 9 || (hour === 9 && minute >= 0)
 }
 
+/** 今日尚未到达的 9:00 时间戳；已过 9 点则返回 null */
+export function getNextMorningStartTimestamp(now = Date.now()): number | null {
+  const date = new Date(now)
+  const target = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 9, 0, 0, 0)
+  if (now >= target.getTime()) return null
+  return target.getTime()
+}
+
 export function isForceRestTime() {
   const { hour } = getCurrentHourMinute()
   return hour >= 23
+}
+
+/** 今日尚未到达的 23:00 时间戳；已过 23 点则返回 null */
+export function getNextForceRestTimestamp(now = Date.now()): number | null {
+  const date = new Date(now)
+  const target = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 0, 0, 0)
+  if (now >= target.getTime()) return null
+  return target.getTime()
 }
 
 /** 休整日按当前时刻归入番茄统计时段（全天可用，仅用于轮数分桶） */

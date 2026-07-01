@@ -55,6 +55,8 @@ import {
   formatTime,
   getPeriodPomodoroCount,
   getPomodoroCountForPeriod,
+  getNextForceRestTimestamp,
+  getNextMorningStartTimestamp,
   getTodayKey,
   getTotalPomodoroCount,
   incrementPeriodPomodoro,
@@ -75,6 +77,11 @@ const REST_DONE_GRACE_SECONDS = 3 * 60
 const FREE_HOUR_SECONDS = 60 * 60
 const FREE_HOUR_PROMPT_AT = 55 * 60
 const NIGHT_REST_SECONDS = 30 * 60
+/** 倒计时剩余 ≤ 该秒数时播放「快结束」提醒（与自由 1 小时 55 分钟提醒同音） */
+const REST_DONE_ENDING_REMINDER_AT = 60
+const NIGHT_REST_ENDING_REMINDER_AT = 5 * 60
+const RELAXED_ENDING_REMINDER_AT = 5 * 60
+const MID_BREAK_ENDING_REMINDER_AT = 5 * 60
 const RING_CIRCUMFERENCE = 553
 const POMODORO_STORAGE_KEY = 'pomodoro-daily-count'
 
@@ -241,16 +248,61 @@ export function useTimeManagement() {
   }
 
   async function updateBackgroundSchedule() {
-    if (!isBackgroundRuntimeEnabled() || !state.timerDeadlineAt) {
+    if (!isBackgroundRuntimeEnabled()) {
       await clearScheduledTimer()
       return
     }
-    await syncScheduledTimer({
-      deadlineAt: state.timerDeadlineAt,
-      title: '自学时间',
-      body: getTimerNotificationBody(),
-      tag: 'study-countdown',
-    })
+
+    if (state.timerDeadlineAt) {
+      await syncScheduledTimer({
+        deadlineAt: state.timerDeadlineAt,
+        title: '自学时间',
+        body: getTimerNotificationBody(),
+        tag: 'study-countdown',
+        kind: 'countdown',
+      })
+      return
+    }
+
+    if (
+      !isTodayPaused() &&
+      !state.morningActivated &&
+      state.date === getTodayKey() &&
+      state.activity === 'before_morning'
+    ) {
+      const morningAt = getNextMorningStartTimestamp()
+      if (morningAt) {
+        await syncScheduledTimer({
+          deadlineAt: morningAt,
+          title: '自学时间',
+          body: '早上 9 点，开始学习',
+          tag: 'study-morning-start',
+          kind: 'morning_start',
+        })
+        return
+      }
+    }
+
+    if (
+      !isTodayPaused() &&
+      state.date === getTodayKey() &&
+      state.dayPeriod !== 'night_rest' &&
+      state.dayPeriod !== 'sleep'
+    ) {
+      const forceRestAt = getNextForceRestTimestamp()
+      if (forceRestAt) {
+        await syncScheduledTimer({
+          deadlineAt: forceRestAt,
+          title: '自学时间',
+          body: '23 点，进入强制休息',
+          tag: 'study-force-rest',
+          kind: 'force_rest',
+        })
+        return
+      }
+    }
+
+    await clearScheduledTimer()
   }
 
   function stopTimer(options?: { keepBackgroundSchedule?: boolean }) {
@@ -322,6 +374,7 @@ export function useTimeManagement() {
     if (state.timerDeadlineAt) {
       syncStoredRemainingFromDeadline()
       tickFreeHour()
+      tickCountdownEndingReminders()
 
       if (getCountdownRemaining() <= 0) {
         maybePlayPomodoroPeriodEndedSound()
@@ -330,6 +383,7 @@ export function useTimeManagement() {
       }
       persist()
     } else if (state.activity === 'mid_break' || state.activity === 'exercise' || state.activity === 'labor') {
+      tickMidBreakEndingReminder()
       persist()
     }
   }
@@ -342,9 +396,11 @@ export function useTimeManagement() {
       countdownOnComplete = countdownOnComplete ?? resolveCountdownOnComplete()
       syncStoredRemainingFromDeadline()
       tickFreeHour()
+      tickCountdownEndingReminders()
     }
 
     syncMidBreakFromClock()
+    tickMidBreakEndingReminder()
     syncExerciseFromClock()
     syncLaborFromClock()
     syncStudyFromClock()
@@ -426,13 +482,21 @@ export function useTimeManagement() {
         countdownOnComplete = resolveCountdownOnComplete()
       }
       ensureTimerLoop()
-      void updateBackgroundSchedule()
     } else if (overdueByState || isLocalTimerOverdue()) {
       resumeTimersAfterLoad()
+    }
+    if (isBackgroundRuntimeEnabled()) {
+      void updateBackgroundSchedule()
     }
   }
 
   function handleBackgroundTimerEvent() {
+    const job = readLocalTimerJob()
+    if (job?.kind === 'morning_start' || job?.kind === 'force_rest') {
+      unlockAudio()
+    }
+    checkMorningStart()
+    checkForceRest()
     syncAllFromClock()
     if (!countdownOnComplete && state.timerDeadlineAt) {
       countdownOnComplete = resolveCountdownOnComplete()
@@ -444,7 +508,7 @@ export function useTimeManagement() {
 
   function handleAppHidden() {
     persist()
-    if (isBackgroundRuntimeEnabled() && state.timerDeadlineAt) {
+    if (isBackgroundRuntimeEnabled()) {
       void updateBackgroundSchedule()
     }
   }
@@ -619,6 +683,64 @@ export function useTimeManagement() {
       playReminderSound()
       persist()
     }
+  }
+
+  function getCountdownEndingReminderKey() {
+    if (state.timerDeadlineAt) {
+      return `${state.activity}:${state.pomodoroPhase}:${state.timerDeadlineAt}`
+    }
+    if (state.activity === 'mid_break' && state.midBreakSegmentStartedAt) {
+      return `mid_break:${state.midBreakSegmentStartedAt}`
+    }
+    return null
+  }
+
+  function playCountdownEndingReminder(key: string) {
+    if (state.countdownEndingReminderKey === key) return
+    state.countdownEndingReminderKey = key
+    unlockAudio()
+    playReminderSound()
+  }
+
+  function resolveCountdownEndingReminderThreshold(): number | null {
+    if (state.activity === 'free_hour' || state.activity === 'free_hour_prompt') {
+      return null
+    }
+    if (state.activity === 'night_rest_timer') return NIGHT_REST_ENDING_REMINDER_AT
+    if (state.activity === 'relaxed_pomodoro') return RELAXED_ENDING_REMINDER_AT
+    if (state.activity !== 'pomodoro') return null
+
+    switch (state.pomodoroPhase) {
+      case 'restDone':
+        return REST_DONE_ENDING_REMINDER_AT
+      default:
+        return null
+    }
+  }
+
+  function tickCountdownEndingReminders() {
+    const threshold = resolveCountdownEndingReminderThreshold()
+    if (threshold === null || !state.timerDeadlineAt) return
+
+    const remaining = getCountdownRemaining()
+    if (remaining > threshold || remaining <= 0) return
+
+    const key = getCountdownEndingReminderKey()
+    if (!key) return
+    playCountdownEndingReminder(key)
+    persist()
+  }
+
+  function tickMidBreakEndingReminder() {
+    if (state.activity !== 'mid_break' || !state.midBreakSegmentStartedAt) return
+
+    const remaining = MID_BREAK_DAILY_QUOTA - getMidBreakUsedNow()
+    if (remaining > MID_BREAK_ENDING_REMINDER_AT || remaining <= 0) return
+
+    const key = getCountdownEndingReminderKey()
+    if (!key) return
+    playCountdownEndingReminder(key)
+    persist()
   }
 
   function switchMode(period: DayPeriod, activity: Activity, options?: { playSound?: boolean }) {
@@ -1372,6 +1494,7 @@ export function useTimeManagement() {
   })
 
   const hintText = computed(() => {
+    void clockNow.value
     if (!audioUnlockedRef.value) return '请先点击页面任意位置，启用音效'
     if (isTodayPaused() && state.activity === 'exercise') {
       return '锻炼结束后点击「锻炼完毕」'
@@ -1397,12 +1520,24 @@ export function useTimeManagement() {
     if (state.activity === 'exercise') return '锻炼结束后点击「锻炼完毕」'
     if (state.activity === 'labor') return '劳动结束后点击「劳动完毕」'
     if (state.activity === 'mid_break') {
+      const left = MID_BREAK_DAILY_QUOTA - getMidBreakUsedNow()
+      if (left <= MID_BREAK_ENDING_REMINDER_AT) {
+        return `休整即将达上限（剩余 ${formatTime(left)}）`
+      }
       return `休整剩余 ${midBreakRemainingDisplay.value}，点击结束恢复学习`
     }
     if (state.activity === 'relaxed_pomodoro') {
+      if (getRemainingSeconds() <= RELAXED_ENDING_REMINDER_AT) {
+        return '宽松休息快结束了'
+      }
       return '宽松休息 2 小时，本段番茄 +2'
     }
-    if (state.activity === 'night_rest_timer') return '放松休息，30 分钟后提示睡眠'
+    if (state.activity === 'night_rest_timer') {
+      if (getRemainingSeconds() <= NIGHT_REST_ENDING_REMINDER_AT) {
+        return '即将提示进入睡眠'
+      }
+      return '放松休息，30 分钟后提示睡眠'
+    }
     if (state.activity === 'sleep_prompt') return '请准备进入睡眠时间'
 
     switch (state.pomodoroPhase) {
@@ -1413,6 +1548,9 @@ export function useTimeManagement() {
       case 'resting':
         return '好好休息…'
       case 'restDone':
+        if (getRemainingSeconds() <= REST_DONE_ENDING_REMINDER_AT) {
+          return '即将自动进入学习'
+        }
         return '请点击「开始学习」，3 分钟后自动上课'
       default:
         return '点击开始学习'
@@ -1632,6 +1770,7 @@ export function useTimeManagement() {
     migratePomodoroSessionState()
     checkMorningStart()
     checkForceRest()
+    void updateBackgroundSchedule()
   }
 
   function handlePausePeriodsUpdated() {
@@ -1676,7 +1815,7 @@ export function useTimeManagement() {
     countdownOnComplete = null
     stopWatchdog()
     persist()
-    if (isBackgroundRuntimeEnabled() && state.timerDeadlineAt) {
+    if (isBackgroundRuntimeEnabled()) {
       void updateBackgroundSchedule()
     } else {
       void clearScheduledTimer()

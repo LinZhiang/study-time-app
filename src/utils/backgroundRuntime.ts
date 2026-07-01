@@ -2,11 +2,14 @@ const STORAGE_KEY = 'background-runtime-enabled'
 const LOCAL_TIMER_KEY = 'study-bg-timer-v1'
 export const TIMER_BROADCAST_CHANNEL = 'study-time-timer'
 
+export type ScheduledTimerKind = 'countdown' | 'morning_start' | 'force_rest'
+
 export interface ScheduledTimerJob {
   deadlineAt: number
   title: string
   body: string
   tag: string
+  kind?: ScheduledTimerKind
 }
 
 export function isBackgroundRuntimeEnabled(): boolean {
