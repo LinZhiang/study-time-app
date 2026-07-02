@@ -32,14 +32,17 @@ import {
 } from '../utils/relaxedQuota'
 import { appendExerciseEntry } from '../utils/exerciseRecord'
 import {
-  clearScheduledTimer,
+  clearScheduledTimers,
   disableBackgroundRuntime,
+  ensureNotificationPermission,
   isBackgroundRuntimeEnabled,
   isLocalTimerOverdue,
-  readLocalTimerJob,
+  readOverdueLocalTimerJob,
   requestBackgroundRuntimeSetup,
   setupBackgroundRuntimeListener,
-  syncScheduledTimer,
+  syncScheduledTimers,
+  type ScheduledTimerJob,
+  type TimerFiredPayload,
 } from '../utils/backgroundRuntime'
 import { appendLaborEntry } from '../utils/laborRecord'
 import {
@@ -53,13 +56,16 @@ import {
   createDefaultState,
   EVENING_REST_MIN,
   formatTime,
-  getPeriodPomodoroCount,
+  getDisplayPeriodPomodoroCount,
+  getDisplayPomodoroCountForPeriod,
+  getDisplayTotalPomodoroCount,
   getPomodoroCountForPeriod,
   getNextForceRestTimestamp,
   getNextMorningStartTimestamp,
   getTodayKey,
-  getTotalPomodoroCount,
   incrementPeriodPomodoro,
+  isPomodoroRoundInProgress,
+  resolveActivePomodoroPeriod,
   isAfterMorningStart,
   isForceRestTime,
   isPomodoroCountPeriod,
@@ -102,8 +108,8 @@ export function useTimeManagement() {
   const showLaborPicker = ref(false)
   const showExerciseCalorieForm = ref(false)
   const backgroundRuntimeEnabled = ref(isBackgroundRuntimeEnabled())
-  /** 今日番茄 = 各时段已完成轮数之和（单一数据源，无上限） */
-  const todayCount = computed(() => getTotalPomodoroCount(state))
+  /** 今日番茄 = 各时段已完成 + 当前进行中一轮（展示用，无上限） */
+  const todayCount = computed(() => getDisplayTotalPomodoroCount(state))
   /** 驱动界面每秒刷新（Date.now 本身不是响应式的） */
   const clockNow = ref(Date.now())
   let timerId: ReturnType<typeof setInterval> | null = null
@@ -203,7 +209,7 @@ export function useTimeManagement() {
 
   function persist() {
     saveScheduleState({ ...state })
-    syncLegacyTodayCount(getTotalPomodoroCount(state))
+    syncLegacyTodayCount(getDisplayTotalPomodoroCount(state))
   }
 
   function logModeEnter(period: DayPeriod) {
@@ -242,26 +248,89 @@ export function useTimeManagement() {
     if (state.activity === 'relaxed_pomodoro') return '宽松番茄时间到'
     if (state.pomodoroPhase === 'studying') return '学习时间到'
     if (state.pomodoroPhase === 'resting') return '休息时间到'
-    if (state.pomodoroPhase === 'studyDone') return '学习阶段结束'
-    if (state.pomodoroPhase === 'restDone') return '休息阶段结束'
+    if (state.pomodoroPhase === 'studyDone') return '学习等待时间到，请开始休息'
+    if (state.pomodoroPhase === 'restDone') return '休息等待时间到，请开始学习'
     return '计时结束'
   }
 
-  async function updateBackgroundSchedule() {
-    if (!isBackgroundRuntimeEnabled()) {
-      await clearScheduledTimer()
-      return
+  function getCountdownEndingReminderBody() {
+    if (state.activity === 'night_rest_timer' || state.activity === 'sleep_prompt') {
+      return '夜间休息还剩 5 分钟'
     }
+    if (state.activity === 'relaxed_pomodoro') return '宽松番茄还剩 5 分钟'
+    if (state.pomodoroPhase === 'restDone') return '休息等待还剩 1 分钟'
+    return '计时即将结束'
+  }
 
-    if (state.timerDeadlineAt) {
-      await syncScheduledTimer({
+  function collectBackgroundTimerJobs(): ScheduledTimerJob[] {
+    const jobs: ScheduledTimerJob[] = []
+    const now = Date.now()
+
+    if (state.timerDeadlineAt && state.timerDeadlineAt > now) {
+      jobs.push({
         deadlineAt: state.timerDeadlineAt,
         title: '自学时间',
         body: getTimerNotificationBody(),
-        tag: 'study-countdown',
+        tag: `study-countdown-end-${state.timerDeadlineAt}`,
         kind: 'countdown',
       })
-      return
+
+      const threshold = resolveCountdownEndingReminderThreshold()
+      if (threshold !== null) {
+        const reminderAt = state.timerDeadlineAt - threshold * 1000
+        if (reminderAt > now) {
+          jobs.push({
+            deadlineAt: reminderAt,
+            title: '自学时间',
+            body: getCountdownEndingReminderBody(),
+            tag: `study-countdown-reminder-${state.timerDeadlineAt}`,
+            kind: 'reminder',
+          })
+        }
+      }
+
+      if (
+        (state.activity === 'free_hour' || state.activity === 'free_hour_prompt') &&
+        !state.freeHourPromptShown
+      ) {
+        const promptAt = state.timerDeadlineAt - (FREE_HOUR_SECONDS - FREE_HOUR_PROMPT_AT) * 1000
+        if (promptAt > now) {
+          jobs.push({
+            deadlineAt: promptAt,
+            title: '自学时间',
+            body: '自由时间还剩 5 分钟，可提前开始学习',
+            tag: `study-free-hour-prompt-${state.timerDeadlineAt}`,
+            kind: 'free_hour_prompt',
+          })
+        }
+      }
+    }
+
+    if (state.activity === 'mid_break' && state.midBreakSegmentStartedAt) {
+      const remaining = Math.max(0, MID_BREAK_DAILY_QUOTA - getMidBreakUsedNow())
+      if (remaining > 0) {
+        const endAt = now + remaining * 1000
+        jobs.push({
+          deadlineAt: endAt,
+          title: '自学时间',
+          body: '中途休整时间到',
+          tag: `study-mid-break-end-${state.midBreakSegmentStartedAt}`,
+          kind: 'mid_break_end',
+        })
+
+        if (remaining > MID_BREAK_ENDING_REMINDER_AT) {
+          const reminderAt = endAt - MID_BREAK_ENDING_REMINDER_AT * 1000
+          if (reminderAt > now) {
+            jobs.push({
+              deadlineAt: reminderAt,
+              title: '自学时间',
+              body: '中途休整还剩 5 分钟',
+              tag: `study-mid-break-reminder-${state.midBreakSegmentStartedAt}`,
+              kind: 'reminder',
+            })
+          }
+        }
+      }
     }
 
     if (
@@ -271,15 +340,14 @@ export function useTimeManagement() {
       state.activity === 'before_morning'
     ) {
       const morningAt = getNextMorningStartTimestamp()
-      if (morningAt) {
-        await syncScheduledTimer({
+      if (morningAt && morningAt > now) {
+        jobs.push({
           deadlineAt: morningAt,
           title: '自学时间',
           body: '早上 9 点，开始学习',
           tag: 'study-morning-start',
           kind: 'morning_start',
         })
-        return
       }
     }
 
@@ -290,26 +358,44 @@ export function useTimeManagement() {
       state.dayPeriod !== 'sleep'
     ) {
       const forceRestAt = getNextForceRestTimestamp()
-      if (forceRestAt) {
-        await syncScheduledTimer({
+      if (forceRestAt && forceRestAt > now) {
+        jobs.push({
           deadlineAt: forceRestAt,
           title: '自学时间',
           body: '23 点，进入强制休息',
           tag: 'study-force-rest',
           kind: 'force_rest',
         })
-        return
       }
     }
 
-    await clearScheduledTimer()
+    return jobs
+  }
+
+  async function ensureBackgroundForTimer() {
+    if (!isBackgroundRuntimeEnabled()) {
+      await requestBackgroundRuntimeSetup()
+      backgroundRuntimeEnabled.value = true
+      return
+    }
+    if ('Notification' in window && Notification.permission === 'default') {
+      await ensureNotificationPermission()
+    }
+  }
+
+  async function updateBackgroundSchedule() {
+    if (!isBackgroundRuntimeEnabled()) {
+      await clearScheduledTimers()
+      return
+    }
+    await syncScheduledTimers(collectBackgroundTimerJobs())
   }
 
   function stopTimer(options?: { keepBackgroundSchedule?: boolean }) {
     pauseTimerLoopOnly()
     countdownOnComplete = null
     if (!options?.keepBackgroundSchedule) {
-      void clearScheduledTimer()
+      void clearScheduledTimers()
     }
   }
 
@@ -358,7 +444,7 @@ export function useTimeManagement() {
     if (!timerId) {
       timerId = setInterval(runTimerTick, 1000)
     }
-    void updateBackgroundSchedule()
+    void ensureBackgroundForTimer().then(() => updateBackgroundSchedule())
   }
 
   function startCountdown(onComplete: () => void) {
@@ -469,7 +555,7 @@ export function useTimeManagement() {
       options?.notifyIfMissed === true &&
       (isLocalTimerOverdue() || overdueByState)
     const notifyBody = shouldNotifyMissed
-      ? (readLocalTimerJob()?.body ?? getTimerNotificationBody())
+      ? (readOverdueLocalTimerJob()?.body ?? getTimerNotificationBody())
       : null
 
     syncAllFromClock()
@@ -490,14 +576,58 @@ export function useTimeManagement() {
     }
   }
 
-  function handleBackgroundTimerEvent() {
-    const job = readLocalTimerJob()
-    if (job?.kind === 'morning_start' || job?.kind === 'force_rest') {
+  function handleBackgroundTimerEvent(payload?: TimerFiredPayload) {
+    const kind = payload?.kind
+
+    if (kind === 'reminder') {
+      unlockAudio()
+      playReminderSound()
+      syncAllFromClock()
+      void updateBackgroundSchedule()
+      bumpClock()
+      return
+    }
+
+    if (kind === 'free_hour_prompt') {
+      unlockAudio()
+      playReminderSound()
+      if (
+        !state.freeHourPromptShown &&
+        (state.activity === 'free_hour' || state.activity === 'free_hour_prompt')
+      ) {
+        state.freeHourPromptShown = true
+        state.activity = 'free_hour_prompt'
+        persist()
+      }
+      syncAllFromClock()
+      void updateBackgroundSchedule()
+      bumpClock()
+      return
+    }
+
+    if (kind === 'mid_break_end') {
+      unlockAudio()
+      endMidBreak(true)
+      void updateBackgroundSchedule()
+      bumpClock()
+      return
+    }
+
+    if (kind === 'morning_start' || kind === 'force_rest') {
       unlockAudio()
     }
+
     checkMorningStart()
     checkForceRest()
-    syncAllFromClock()
+
+    if (kind === 'countdown' || kind === undefined) {
+      syncAllFromClock()
+      maybePlayPomodoroPeriodEndedSound()
+      processDueCountdowns()
+    } else {
+      syncAllFromClock()
+    }
+
     if (!countdownOnComplete && state.timerDeadlineAt) {
       countdownOnComplete = resolveCountdownOnComplete()
     }
@@ -994,8 +1124,10 @@ export function useTimeManagement() {
   }
 
   function finishMeal() {
+    if (state.activity !== 'waiting_meal') return
+    if (state.dayPeriod !== 'noon' && state.dayPeriod !== 'evening') return
     stopTimer()
-    switchMode('noon', 'free_hour')
+    switchMode(state.dayPeriod, 'free_hour')
     state.freeHourRemaining = FREE_HOUR_SECONDS
     state.freeHourPromptShown = false
     startCountdown(onFreeHourFinished)
@@ -1225,10 +1357,8 @@ export function useTimeManagement() {
     if (state.afternoonCount < AFTERNOON_EVENING_MIN) return
     stopTimer()
     clearPomodoroSession()
-    switchMode('evening', 'free_hour')
-    state.freeHourRemaining = FREE_HOUR_SECONDS
-    state.freeHourPromptShown = false
-    startCountdown(onFreeHourFinished)
+    switchMode('evening', 'waiting_meal')
+    state.pomodoroPhase = 'idle'
     persist()
   }
 
@@ -1278,6 +1408,7 @@ export function useTimeManagement() {
     playActivitySwitchSound()
     ensureTimerLoop()
     persist()
+    void ensureBackgroundForTimer().then(() => updateBackgroundSchedule())
   }
 
   function endMidBreak(forced = false) {
@@ -1557,21 +1688,16 @@ export function useTimeManagement() {
     }
   })
 
-  const periodPomodoroCount = computed(() => getPeriodPomodoroCount(state))
+  const periodPomodoroCount = computed(() => getDisplayPeriodPomodoroCount(state))
 
   const periodPomodoroCountLabel = computed(() => {
-    const completed = periodPomodoroCount.value
-    if (
-      state.activity === 'pomodoro' &&
-      state.currentPomodoroRound > completed &&
-      (state.pomodoroPhase === 'studying' ||
-        state.pomodoroPhase === 'studyDone' ||
-        state.pomodoroPhase === 'resting' ||
-        state.pomodoroPhase === 'restDone')
-    ) {
-      return `${completed} 轮 · 第 ${state.currentPomodoroRound} 轮进行中`
+    const count = periodPomodoroCount.value
+    const activePeriod = resolveActivePomodoroPeriod(state)
+    const settled = activePeriod ? getPomodoroCountForPeriod(state, activePeriod) : 0
+    if (isPomodoroRoundInProgress(state) && count > settled) {
+      return `${count} 轮（进行中）`
     }
-    return `${completed} 轮`
+    return `${count} 轮`
   })
 
   const primaryAction = computed(() => {
@@ -1671,7 +1797,10 @@ export function useTimeManagement() {
         label: '进入中午模式',
         action: 'noon',
         disabled: state.morningCount < MORNING_NOON_MIN,
-        hint: state.morningCount >= MORNING_NOON_MIN ? '可继续番茄，不必立即切换' : undefined,
+        hint:
+          getDisplayPomodoroCountForPeriod(state, 'morning') >= MORNING_NOON_MIN
+            ? '可继续番茄，不必立即切换'
+            : undefined,
       })
     }
 
@@ -1680,7 +1809,10 @@ export function useTimeManagement() {
         label: '进入晚上模式',
         action: 'evening',
         disabled: state.afternoonCount < AFTERNOON_EVENING_MIN,
-        hint: state.afternoonCount >= AFTERNOON_EVENING_MIN ? '可继续番茄，不必立即切换' : undefined,
+        hint:
+          getDisplayPomodoroCountForPeriod(state, 'afternoon') >= AFTERNOON_EVENING_MIN
+            ? '可继续番茄，不必立即切换'
+            : undefined,
       })
     }
 
@@ -1689,7 +1821,10 @@ export function useTimeManagement() {
         label: '进入休息模式',
         action: 'nightRest',
         disabled: state.eveningCount < EVENING_REST_MIN,
-        hint: state.eveningCount >= EVENING_REST_MIN ? '可继续番茄，不必立即切换' : undefined,
+        hint:
+          getDisplayPomodoroCountForPeriod(state, 'evening') >= EVENING_REST_MIN
+            ? '可继续番茄，不必立即切换'
+            : undefined,
       })
     }
 
@@ -1762,7 +1897,7 @@ export function useTimeManagement() {
           getPomodoroCountForPeriod(state, state.dayPeriod) + 1
       }
     }
-    syncLegacyTodayCount(getTotalPomodoroCount(state))
+    syncLegacyTodayCount(getDisplayTotalPomodoroCount(state))
   }
 
   function syncScheduleForToday() {
@@ -1793,10 +1928,17 @@ export function useTimeManagement() {
     syncScheduleForToday()
     resumeTimersAfterLoad()
     startWatchdog()
-    void updateBackgroundSchedule()
 
-    removeBackgroundListener = setupBackgroundRuntimeListener(() => {
-      handleBackgroundTimerEvent()
+    void (async () => {
+      if (isBackgroundRuntimeEnabled()) {
+        backgroundRuntimeEnabled.value = true
+        await ensureNotificationPermission()
+      }
+      await updateBackgroundSchedule()
+    })()
+
+    removeBackgroundListener = setupBackgroundRuntimeListener((payload) => {
+      handleBackgroundTimerEvent(payload)
     })
 
     tickId = setInterval(() => {
@@ -1818,7 +1960,7 @@ export function useTimeManagement() {
     if (isBackgroundRuntimeEnabled()) {
       void updateBackgroundSchedule()
     } else {
-      void clearScheduledTimer()
+      void clearScheduledTimers()
     }
     if (tickId) clearInterval(tickId)
     removeBackgroundListener?.()

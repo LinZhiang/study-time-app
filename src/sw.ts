@@ -9,18 +9,18 @@ interface TimerJob {
   title: string
   body: string
   tag: string
-  kind?: 'countdown' | 'morning_start' | 'force_rest'
+  kind?: string
 }
 
 const TIMER_CACHE = 'study-timer-v1'
-const TIMER_CACHE_KEY = 'https://study-time-app.local/timer-job'
+const TIMER_CACHE_KEY = 'https://study-time-app.local/timer-jobs'
 
 precacheAndRoute(self.__WB_MANIFEST)
 clientsClaim()
 
-let timerJob: TimerJob | null = null
+let timerJobs: TimerJob[] = []
 let checkId: ReturnType<typeof setInterval> | null = null
-let timeoutId: ReturnType<typeof setTimeout> | null = null
+const timeoutIds = new Map<string, ReturnType<typeof setTimeout>>()
 
 function getTimerChannel() {
   if (typeof BroadcastChannel === 'undefined') return null
@@ -34,45 +34,74 @@ async function notifyClients(data: unknown) {
   }
 }
 
-async function persistTimerJob(job: TimerJob | null) {
+async function persistTimerJobs(jobs: TimerJob[]) {
   const cache = await caches.open(TIMER_CACHE)
-  if (!job) {
+  if (jobs.length === 0) {
     await cache.delete(TIMER_CACHE_KEY)
     return
   }
-  await cache.put(TIMER_CACHE_KEY, new Response(JSON.stringify(job), {
-    headers: { 'Content-Type': 'application/json' },
-  }))
+  await cache.put(
+    TIMER_CACHE_KEY,
+    new Response(JSON.stringify(jobs), {
+      headers: { 'Content-Type': 'application/json' },
+    }),
+  )
 }
 
-async function loadPersistedTimerJob(): Promise<TimerJob | null> {
+async function loadPersistedTimerJobs(): Promise<TimerJob[]> {
   try {
     const cache = await caches.open(TIMER_CACHE)
     const response = await cache.match(TIMER_CACHE_KEY)
-    if (!response) return null
-    const data = JSON.parse(await response.text()) as TimerJob
-    if (!data?.deadlineAt) return null
-    return data
+    if (!response) return []
+    const data = JSON.parse(await response.text()) as TimerJob | TimerJob[]
+    const list = Array.isArray(data) ? data : [data]
+    return list.filter((job) => Boolean(job?.deadlineAt && job?.tag))
   } catch {
-    return null
+    return []
   }
 }
 
+function isImportantJob(kind?: string) {
+  return (
+    kind === 'countdown' ||
+    kind === 'morning_start' ||
+    kind === 'force_rest' ||
+    kind === 'mid_break_end' ||
+    kind === 'free_hour_prompt'
+  )
+}
+
 async function showTimerNotification(job: TimerJob) {
-  await self.registration.showNotification(job.title, {
+  const options: NotificationOptions & { vibrate?: number[]; renotify?: boolean } = {
     body: job.body,
     tag: job.tag,
-    icon: '/study-icon.svg',
-    badge: '/study-icon.svg',
-    data: { url: '/time' },
-  })
+    icon: '/pwa-192x192.png',
+    badge: '/pwa-192x192.png',
+    vibrate: [180, 90, 180],
+    requireInteraction: isImportantJob(job.kind),
+    silent: false,
+    renotify: true,
+    data: { url: '/time', kind: job.kind, tag: job.tag },
+  }
+  await self.registration.showNotification(job.title, options)
 }
 
 async function fireTimer(job: TimerJob) {
-  await persistTimerJob(null)
+  timerJobs = timerJobs.filter((item) => item.tag !== job.tag)
+  clearJobTimeout(job.tag)
+  await persistTimerJobs(timerJobs)
   await showTimerNotification(job)
-  await notifyClients({ type: 'TIMER_FIRED', tag: job.tag })
-  getTimerChannel()?.postMessage({ type: 'TIMER_FIRED', tag: job.tag })
+  const payload = { type: 'TIMER_FIRED', kind: job.kind, tag: job.tag }
+  await notifyClients(payload)
+  getTimerChannel()?.postMessage(payload)
+}
+
+function clearJobTimeout(tag: string) {
+  const timeoutId = timeoutIds.get(tag)
+  if (timeoutId !== undefined) {
+    clearTimeout(timeoutId)
+    timeoutIds.delete(tag)
+  }
 }
 
 function stopCheckLoop() {
@@ -82,87 +111,115 @@ function stopCheckLoop() {
   }
 }
 
+function clearAllTimeouts() {
+  for (const tag of timeoutIds.keys()) {
+    clearJobTimeout(tag)
+  }
+}
+
 function clearTimerSchedule() {
   stopCheckLoop()
-  if (timeoutId !== null) {
-    clearTimeout(timeoutId)
-    timeoutId = null
+  clearAllTimeouts()
+}
+
+function scheduleJobTimeout(job: TimerJob) {
+  clearJobTimeout(job.tag)
+  const delay = Math.max(0, job.deadlineAt - Date.now())
+  if (delay === 0) {
+    void fireTimer(job)
+    return
   }
+
+  const timeoutId = setTimeout(() => {
+    timeoutIds.delete(job.tag)
+    const current = timerJobs.find((item) => item.tag === job.tag)
+    if (!current) return
+    if (Date.now() >= current.deadlineAt) {
+      void fireTimer(current)
+    }
+  }, Math.min(delay, 2_147_483_647))
+
+  timeoutIds.set(job.tag, timeoutId)
 }
 
 function startCheckLoop() {
   if (checkId !== null) return
   checkId = setInterval(() => {
-    if (!timerJob) {
+    if (timerJobs.length === 0) {
       clearTimerSchedule()
       return
     }
-    if (Date.now() >= timerJob.deadlineAt) {
-      const job = timerJob
-      timerJob = null
-      clearTimerSchedule()
+
+    const dueJobs = timerJobs.filter((job) => Date.now() >= job.deadlineAt)
+    if (dueJobs.length === 0) return
+
+    for (const job of dueJobs) {
       void fireTimer(job)
     }
   }, 1000)
 }
 
-function scheduleTimer(job: TimerJob) {
+function scheduleTimers(jobs: TimerJob[]) {
   clearTimerSchedule()
-  timerJob = job
-  void persistTimerJob(job)
+  const now = Date.now()
+  timerJobs = jobs
+    .filter((job) => job.deadlineAt > now)
+    .sort((a, b) => a.deadlineAt - b.deadlineAt)
 
-  const delay = Math.max(0, job.deadlineAt - Date.now())
-  if (delay === 0) {
-    timerJob = null
-    void fireTimer(job)
-    return
+  void persistTimerJobs(timerJobs)
+
+  for (const job of timerJobs) {
+    scheduleJobTimeout(job)
   }
 
-  timeoutId = setTimeout(() => {
-    timeoutId = null
-    if (!timerJob) return
-    if (Date.now() >= timerJob.deadlineAt) {
-      const current = timerJob
-      timerJob = null
-      clearTimerSchedule()
-      void fireTimer(current)
-    }
-  }, Math.min(delay, 2_147_483_647))
-
-  startCheckLoop()
+  if (timerJobs.length > 0) {
+    startCheckLoop()
+  }
 }
 
-async function resumePersistedTimer() {
-  const persisted = await loadPersistedTimerJob()
-  if (!persisted) return
+async function resumePersistedTimers() {
+  const persisted = await loadPersistedTimerJobs()
+  if (persisted.length === 0) return
 
-  if (Date.now() >= persisted.deadlineAt) {
-    timerJob = null
-    clearTimerSchedule()
-    await fireTimer(persisted)
-    return
+  const now = Date.now()
+  const overdue = persisted.filter((job) => job.deadlineAt <= now)
+  const upcoming = persisted.filter((job) => job.deadlineAt > now)
+
+  for (const job of overdue.sort((a, b) => a.deadlineAt - b.deadlineAt)) {
+    await fireTimer(job)
   }
 
-  scheduleTimer(persisted)
+  if (upcoming.length > 0) {
+    scheduleTimers(upcoming)
+  }
 }
+
+self.addEventListener('install', (event) => {
+  event.waitUntil(self.skipWaiting())
+})
 
 self.addEventListener('activate', (event) => {
-  event.waitUntil(resumePersistedTimer())
+  event.waitUntil(resumePersistedTimers())
 })
 
 self.addEventListener('message', (event) => {
-  const data = event.data as { type?: string; job?: TimerJob } | null
+  const data = event.data as { type?: string; job?: TimerJob; jobs?: TimerJob[] } | null
   if (!data?.type) return
 
-  if (data.type === 'SCHEDULE_TIMER' && data.job) {
-    scheduleTimer(data.job)
+  if (data.type === 'SCHEDULE_TIMERS' && Array.isArray(data.jobs)) {
+    scheduleTimers(data.jobs)
     return
   }
 
-  if (data.type === 'CLEAR_TIMER') {
-    timerJob = null
+  if (data.type === 'SCHEDULE_TIMER' && data.job) {
+    scheduleTimers([data.job])
+    return
+  }
+
+  if (data.type === 'CLEAR_TIMERS' || data.type === 'CLEAR_TIMER') {
+    timerJobs = []
     clearTimerSchedule()
-    void persistTimerJob(null)
+    void persistTimerJobs([])
   }
 })
 

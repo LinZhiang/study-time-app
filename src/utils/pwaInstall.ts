@@ -25,7 +25,6 @@ export interface BrowserInstallInfo {
 
 const canPromptInstall = ref(false)
 const isInstalled = ref(false)
-const bannerDismissed = ref(false)
 const swReady = ref(false)
 const swRegisterError = ref<string | null>(null)
 const manualInstallConfirmed = ref(false)
@@ -133,17 +132,6 @@ export async function promptPwaInstall(): Promise<boolean> {
   return false
 }
 
-export function dismissInstallBanner() {
-  bannerDismissed.value = true
-}
-
-export const showInstallBanner = computed(
-  () =>
-    !isInstalled.value &&
-    !bannerDismissed.value &&
-    (canPromptInstall.value || (manualInstallConfirmed.value && browserInstallInfo.needsManualInstall)),
-)
-
 export const installUiStatus = computed<InstallUiStatus>(() => {
   if (isInstalled.value) return 'installed'
   if (swRegisterError.value && !browserInstallInfo.needsManualInstall) return 'error'
@@ -209,14 +197,12 @@ export function usePwaInstall() {
     canPromptInstall,
     isInstalled,
     swReady,
-    showInstallBanner,
     installUiStatus,
     installStatusHint,
     manualInstallSteps,
     browserInstallInfo,
     refreshInstalledState,
     promptPwaInstall,
-    dismissInstallBanner,
   }
 }
 

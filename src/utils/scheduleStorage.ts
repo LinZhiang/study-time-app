@@ -176,18 +176,63 @@ export function getPomodoroCountForPeriod(state: ScheduleState, period: DayPerio
   }
 }
 
-export function getPeriodPomodoroCount(state: ScheduleState) {
-  if (isPomodoroCountPeriod(state.dayPeriod)) {
-    return getPomodoroCountForPeriod(state, state.dayPeriod)
-  }
+export function resolveActivePomodoroPeriod(state: ScheduleState): DayPeriod | null {
   if (state.activePomodoroPeriod && isPomodoroCountPeriod(state.activePomodoroPeriod)) {
-    return getPomodoroCountForPeriod(state, state.activePomodoroPeriod)
+    return state.activePomodoroPeriod
   }
-  return 0
+  if (isPomodoroCountPeriod(state.dayPeriod)) return state.dayPeriod
+  return null
+}
+
+export function isPomodoroRoundInProgress(state: ScheduleState) {
+  return (
+    state.activity === 'pomodoro' &&
+    (state.pomodoroPhase === 'studying' ||
+      state.pomodoroPhase === 'studyDone' ||
+      state.pomodoroPhase === 'resting' ||
+      state.pomodoroPhase === 'restDone')
+  )
+}
+
+/** 某时段已结算进 storage 的番茄轮数 */
+export function getPeriodPomodoroCount(state: ScheduleState) {
+  const period = resolveActivePomodoroPeriod(state)
+  if (!period) return 0
+  return getPomodoroCountForPeriod(state, period)
 }
 
 export function getTotalPomodoroCount(state: ScheduleState) {
   return state.morningCount + state.afternoonCount + state.eveningCount
+}
+
+/** 界面展示：含当前进行中的轮次（无上限，与 MORNING_NOON_MIN 等门槛无关） */
+export function getDisplayPomodoroCountForPeriod(state: ScheduleState, period: DayPeriod) {
+  const completed = getPomodoroCountForPeriod(state, period)
+  if (!isPomodoroRoundInProgress(state)) return completed
+  if (resolveActivePomodoroPeriod(state) !== period) return completed
+  return Math.max(completed, state.currentPomodoroRound)
+}
+
+export function getDisplayPeriodPomodoroCount(state: ScheduleState) {
+  if (isPomodoroCountPeriod(state.dayPeriod)) {
+    return getDisplayPomodoroCountForPeriod(state, state.dayPeriod)
+  }
+  if (state.activePomodoroPeriod && isPomodoroCountPeriod(state.activePomodoroPeriod)) {
+    return getDisplayPomodoroCountForPeriod(state, state.activePomodoroPeriod)
+  }
+  return 0
+}
+
+export function getDisplayTotalPomodoroCount(state: ScheduleState) {
+  let total = getTotalPomodoroCount(state)
+  if (!isPomodoroRoundInProgress(state)) return total
+  const activePeriod = resolveActivePomodoroPeriod(state)
+  if (!activePeriod) return total
+  const completed = getPomodoroCountForPeriod(state, activePeriod)
+  if (state.currentPomodoroRound > completed) {
+    total += state.currentPomodoroRound - completed
+  }
+  return total
 }
 
 export function incrementPeriodPomodoro(state: ScheduleState, period: DayPeriod, count = 1) {

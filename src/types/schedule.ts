@@ -33,7 +33,7 @@ export interface ScheduleState {
   morningActivated: boolean
   /** 当前番茄循环所属时段（早/下/晚），与 dayPeriod 解耦，避免计数错位 */
   activePomodoroPeriod: DayPeriod | null
-  /** 正在进行中的番茄轮次（完成 enterRest 后才计入时段总数） */
+  /** 正在进行中的番茄轮次（界面展示会包含本轮；结算写入 morningCount 等在 enterRest 时） */
   currentPomodoroRound: number
   pomodoroPhase: PomodoroPhase
   pomodoroRemaining: number

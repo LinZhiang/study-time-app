@@ -2,7 +2,6 @@
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import BottomNav from './components/BottomNav.vue'
-import PwaInstallBanner from './components/PwaInstallBanner.vue'
 
 const route = useRoute()
 
@@ -26,6 +25,5 @@ const pageTitle = computed(() => {
     </main>
 
     <BottomNav />
-    <PwaInstallBanner />
   </div>
 </template>

@@ -2,7 +2,13 @@ const STORAGE_KEY = 'background-runtime-enabled'
 const LOCAL_TIMER_KEY = 'study-bg-timer-v1'
 export const TIMER_BROADCAST_CHANNEL = 'study-time-timer'
 
-export type ScheduledTimerKind = 'countdown' | 'morning_start' | 'force_rest'
+export type ScheduledTimerKind =
+  | 'countdown'
+  | 'reminder'
+  | 'free_hour_prompt'
+  | 'mid_break_end'
+  | 'morning_start'
+  | 'force_rest'
 
 export interface ScheduledTimerJob {
   deadlineAt: number
@@ -12,37 +18,75 @@ export interface ScheduledTimerJob {
   kind?: ScheduledTimerKind
 }
 
+export interface TimerFiredPayload {
+  type: 'TIMER_FIRED'
+  kind?: ScheduledTimerKind
+  tag?: string
+}
+
+export function ensureBackgroundRuntimeDefault() {
+  if (localStorage.getItem(STORAGE_KEY) === null) {
+    localStorage.setItem(STORAGE_KEY, '1')
+  }
+}
+
 export function isBackgroundRuntimeEnabled(): boolean {
-  return localStorage.getItem(STORAGE_KEY) === '1'
+  const stored = localStorage.getItem(STORAGE_KEY)
+  if (stored === null) return true
+  return stored === '1'
 }
 
 export function setBackgroundRuntimeEnabled(enabled: boolean) {
   localStorage.setItem(STORAGE_KEY, enabled ? '1' : '0')
 }
 
-function persistLocalTimerJob(job: ScheduledTimerJob | null) {
-  if (!job) {
+function persistLocalTimerJobs(jobs: ScheduledTimerJob[]) {
+  if (jobs.length === 0) {
     localStorage.removeItem(LOCAL_TIMER_KEY)
     return
   }
-  localStorage.setItem(LOCAL_TIMER_KEY, JSON.stringify(job))
+  localStorage.setItem(LOCAL_TIMER_KEY, JSON.stringify(jobs))
 }
 
-export function readLocalTimerJob(): ScheduledTimerJob | null {
+function parseStoredTimerJobs(raw: string): ScheduledTimerJob[] {
+  const data = JSON.parse(raw) as ScheduledTimerJob | ScheduledTimerJob[]
+  const list = Array.isArray(data) ? data : [data]
+  return list.filter((job) => Boolean(job?.deadlineAt && job?.tag))
+}
+
+export function readLocalTimerJobs(): ScheduledTimerJob[] {
   try {
     const raw = localStorage.getItem(LOCAL_TIMER_KEY)
-    if (!raw) return null
-    const data = JSON.parse(raw) as ScheduledTimerJob
-    if (!data?.deadlineAt) return null
-    return data
+    if (!raw) return []
+    return parseStoredTimerJobs(raw)
   } catch {
-    return null
+    return []
   }
 }
 
+/** @deprecated 兼容旧调用，返回最近一条 */
+export function readLocalTimerJob(): ScheduledTimerJob | null {
+  const jobs = readLocalTimerJobs()
+  if (jobs.length === 0) return null
+  return jobs.reduce((earliest, job) =>
+    job.deadlineAt < earliest.deadlineAt ? job : earliest,
+  )
+}
+
+export function readOverdueLocalTimerJob(now = Date.now()): ScheduledTimerJob | null {
+  return readLocalTimerJobs().find((job) => job.deadlineAt <= now) ?? null
+}
+
 export function isLocalTimerOverdue(now = Date.now()) {
-  const job = readLocalTimerJob()
-  return Boolean(job && job.deadlineAt <= now)
+  return readLocalTimerJobs().some((job) => job.deadlineAt <= now)
+}
+
+export async function ensureNotificationPermission(): Promise<NotificationPermission | 'unsupported'> {
+  if (!('Notification' in window)) return 'unsupported'
+  if (Notification.permission === 'default') {
+    return Notification.requestPermission()
+  }
+  return Notification.permission
 }
 
 export async function requestBackgroundRuntimeSetup(): Promise<{
@@ -51,14 +95,7 @@ export async function requestBackgroundRuntimeSetup(): Promise<{
 }> {
   setBackgroundRuntimeEnabled(true)
 
-  let notifications: NotificationPermission | 'unsupported' = 'unsupported'
-  if ('Notification' in window) {
-    if (Notification.permission === 'default') {
-      notifications = await Notification.requestPermission()
-    } else {
-      notifications = Notification.permission
-    }
-  }
+  const notifications = await ensureNotificationPermission()
 
   if ('serviceWorker' in navigator) {
     try {
@@ -73,7 +110,7 @@ export async function requestBackgroundRuntimeSetup(): Promise<{
 
 export function disableBackgroundRuntime() {
   setBackgroundRuntimeEnabled(false)
-  void clearScheduledTimer()
+  void clearScheduledTimers()
 }
 
 async function postToServiceWorker(data: unknown) {
@@ -99,31 +136,52 @@ async function postToServiceWorker(data: unknown) {
   }
 }
 
-export async function syncScheduledTimer(job: ScheduledTimerJob | null) {
+export async function syncScheduledTimers(jobs: ScheduledTimerJob[]) {
   if (!isBackgroundRuntimeEnabled()) {
-    await clearScheduledTimer()
+    await clearScheduledTimers()
     return
   }
+
+  const now = Date.now()
+  const upcoming = jobs
+    .filter((job) => job.deadlineAt > now)
+    .sort((a, b) => a.deadlineAt - b.deadlineAt)
+
+  persistLocalTimerJobs(upcoming)
+  await postToServiceWorker({ type: 'SCHEDULE_TIMERS', jobs: upcoming })
+}
+
+export async function syncScheduledTimer(job: ScheduledTimerJob | null) {
   if (!job) {
-    await clearScheduledTimer()
+    await clearScheduledTimers()
     return
   }
-
-  persistLocalTimerJob(job)
-  await postToServiceWorker({ type: 'SCHEDULE_TIMER', job })
+  await syncScheduledTimers([job])
 }
 
+export async function clearScheduledTimers() {
+  persistLocalTimerJobs([])
+  await postToServiceWorker({ type: 'CLEAR_TIMERS' })
+}
+
+/** @deprecated */
 export async function clearScheduledTimer() {
-  persistLocalTimerJob(null)
-  await postToServiceWorker({ type: 'CLEAR_TIMER' })
+  await clearScheduledTimers()
 }
 
-export function setupBackgroundRuntimeListener(onTimerFired: () => void) {
+export function setupBackgroundRuntimeListener(
+  onTimerFired: (payload?: TimerFiredPayload) => void,
+) {
   if (!('serviceWorker' in navigator)) return () => {}
 
   const handler = (event: MessageEvent) => {
-    const type = (event.data as { type?: string } | null)?.type
-    if (type === 'TIMER_FIRED' || type === 'OPEN_FROM_NOTIFICATION') {
+    const data = event.data as { type?: string; kind?: ScheduledTimerKind; tag?: string } | null
+    if (!data?.type) return
+    if (data.type === 'TIMER_FIRED') {
+      onTimerFired(data as TimerFiredPayload)
+      return
+    }
+    if (data.type === 'OPEN_FROM_NOTIFICATION') {
       onTimerFired()
     }
   }
@@ -133,8 +191,8 @@ export function setupBackgroundRuntimeListener(onTimerFired: () => void) {
   let channel: BroadcastChannel | null = null
   if (typeof BroadcastChannel !== 'undefined') {
     channel = new BroadcastChannel(TIMER_BROADCAST_CHANNEL)
-    channel.onmessage = () => {
-      onTimerFired()
+    channel.onmessage = (event) => {
+      onTimerFired(event.data as TimerFiredPayload)
     }
   }
 
@@ -149,4 +207,8 @@ export function isStandaloneDisplayMode(): boolean {
     window.matchMedia('(display-mode: standalone)').matches ||
     (window.navigator as Navigator & { standalone?: boolean }).standalone === true
   )
+}
+
+if (typeof window !== 'undefined') {
+  ensureBackgroundRuntimeDefault()
 }

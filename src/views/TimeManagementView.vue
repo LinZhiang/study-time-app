@@ -101,7 +101,7 @@ const isTimerRunning = computed(() => {
         <div>
           <p class="background-runtime-card__title">后台计时</p>
           <p class="background-runtime-card__desc">
-            切到后台仍按时间戳继续计时，到点会发系统通知（需允许通知权限）
+            默认开启。切到后台或锁屏后，到点会发系统通知（含快结束提醒）；请允许通知权限，并建议安装到主屏幕。
           </p>
         </div>
         <button
@@ -202,7 +202,7 @@ const isTimerRunning = computed(() => {
               55 分钟可提前学习，1 小时到 → 下午番茄（可持续多轮）
             </li>
             <li :class="{ 'phase-guide__item--active': state.dayPeriod === 'evening' }">
-              至少 4 轮后可进晚上（可继续学）→ 先休息 1 小时再番茄
+              至少 4 轮后可进晚上（可继续学）→ 吃饭完毕 → 自由 1 小时 → 晚上番茄
             </li>
             <li :class="{ 'phase-guide__item--active': state.dayPeriod === 'night_rest' || state.dayPeriod === 'sleep' }">
               至少 2 轮或 23:00 强制 → 休息 30 分钟 → 睡眠
