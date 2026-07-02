@@ -1,13 +1,19 @@
 <script setup lang="ts">
 import { computed, onActivated, ref } from 'vue'
 import type { DailyStarsDisplayState, StaminaManualStars } from '../types/dailyStars'
-import { DAILY_STARS_START_DATE, STAMINA_CALORIE_THRESHOLD } from '../types/dailyStars'
+import { DAILY_STARS_START_DATE } from '../types/dailyStars'
 import { MONEY_BASE_BALANCE, MONEY_DAILY_INCREMENT } from '../types/moneySpend'
 import {
+  calculateExecutionStars,
+  calculateLaborMetricStars,
   calculateStaminaAutoStars,
+  describeExecutionPomodoroMeta,
+  describeLaborMetricMeta,
+  describeStaminaAutoStars,
   formatExerciseDurationForStars,
   formatStarCount,
   formatStudyDuration,
+  loadTodayLaborDurationSeconds,
 } from '../utils/dailyStars'
 import { formatExerciseCalories, loadTodayExerciseRecord } from '../utils/exerciseRecord'
 import {
@@ -16,7 +22,7 @@ import {
   getDailyStarsDisplayState,
 } from '../utils/dailyStarsArchive'
 import { formatPauseDateLabel } from '../utils/pausePeriod'
-import { getTodayKey } from '../utils/scheduleStorage'
+import { getTodayKey, loadScheduleState } from '../utils/scheduleStorage'
 import { loadTodayStaminaManual, setTodayStaminaManual } from '../utils/staminaRecord'
 import {
   formatMoneyAmount,
@@ -40,6 +46,7 @@ const moneySpentInput = ref('')
 const moneySubmitError = ref('')
 const moneySubmitSuccess = ref('')
 const cleanlinessMaintained = ref(loadTodayCleanliness().maintained)
+const scheduleSnapshot = ref(loadScheduleState())
 
 function refresh() {
   displayState.value = getDailyStarsDisplayState()
@@ -52,6 +59,7 @@ function refresh() {
   moneySubmitError.value = ''
   moneySubmitSuccess.value = ''
   cleanlinessMaintained.value = loadTodayCleanliness().maintained
+  scheduleSnapshot.value = loadScheduleState()
 }
 
 const breakdown = computed(() =>
@@ -83,12 +91,34 @@ const totalStarsDisplay = computed(() => {
 const laborStarsDisplay = computed(() =>
   breakdown.value ? formatStarCount(breakdown.value.laborStars) : '',
 )
+const laborMetricStarsDisplay = computed(() => {
+  if (breakdown.value) return formatStarCount(breakdown.value.laborMetricStars, 1)
+  return todayLaborMetricPreview.value.starsDisplay
+})
+const laborMetricMetaDisplay = computed(() => {
+  if (breakdown.value) return describeLaborMetricMeta(breakdown.value.laborSeconds)
+  return todayLaborMetricPreview.value.meta
+})
 const exerciseStarsDisplay = computed(() =>
   breakdown.value ? formatStarCount(breakdown.value.exerciseStars, 2) : '',
 )
 const perseveranceStarsDisplay = computed(() =>
   breakdown.value ? formatStarCount(breakdown.value.perseveranceStars, 1) : '',
 )
+const executionStarsDisplay = computed(() => {
+  if (breakdown.value) return formatStarCount(breakdown.value.executionStars, 1)
+  return todayExecutionPreview.value.starsDisplay
+})
+const executionMetaDisplay = computed(() => {
+  if (breakdown.value) {
+    return describeExecutionPomodoroMeta({
+      morningCount: breakdown.value.morningPomodoroCount,
+      afternoonCount: breakdown.value.afternoonPomodoroCount,
+      eveningCount: breakdown.value.eveningPomodoroCount,
+    })
+  }
+  return todayExecutionPreview.value.meta
+})
 const staminaStarsDisplay = computed(() => {
   if (breakdown.value) {
     return formatStarCount(breakdown.value.staminaStars, 2)
@@ -102,13 +132,18 @@ const perseveranceMetaDisplay = computed(() =>
 const staminaMetaDisplay = computed(() => {
   if (breakdown.value) {
     const parts = [`大卡 ${formatExerciseCalories(breakdown.value.exerciseCalories)}`]
-    if (breakdown.value.staminaAutoStars > 0) parts.push('自动 +1')
+    const autoLabel = describeStaminaAutoStars(breakdown.value.staminaAutoStars)
+    if (autoLabel) parts.push(autoLabel)
     if (breakdown.value.staminaManualStars === 1) parts.push('手动 +1')
     if (breakdown.value.staminaManualStars === -1) parts.push('手动 −1')
     return parts.join(' · ')
   }
   const parts = [`大卡 ${formatExerciseCalories(todayExerciseCalories.value)}`]
-  if (calculateStaminaAutoStars(todayExerciseCalories.value) > 0) parts.push('预计自动 +1')
+  const autoLabel = describeStaminaAutoStars(
+    calculateStaminaAutoStars(todayExerciseCalories.value),
+    '预计自动',
+  )
+  if (autoLabel) parts.push(autoLabel)
   if (manualStaminaStars.value === 1) parts.push('手动 +1')
   if (manualStaminaStars.value === -1) parts.push('手动 −1')
   return parts.join(' · ')
@@ -149,12 +184,35 @@ const todayStaminaPreview = computed(() => {
   const auto = calculateStaminaAutoStars(todayExerciseCalories.value)
   const total = auto + manualStaminaStars.value
   const parts = [`大卡 ${formatExerciseCalories(todayExerciseCalories.value)}`]
-  if (auto > 0) parts.push('预计自动 +1')
+  const autoLabel = describeStaminaAutoStars(auto, '预计自动')
+  if (autoLabel) parts.push(autoLabel)
   if (manualStaminaStars.value === 1) parts.push('手动 +1')
   if (manualStaminaStars.value === -1) parts.push('手动 −1')
   return {
     starsDisplay: formatStarCount(total, 2),
     meta: parts.join(' · '),
+  }
+})
+
+const todayExecutionPreview = computed(() => {
+  const counts = {
+    morningCount: scheduleSnapshot.value.morningCount,
+    afternoonCount: scheduleSnapshot.value.afternoonCount,
+    eveningCount: scheduleSnapshot.value.eveningCount,
+  }
+  const stars = calculateExecutionStars(counts)
+  return {
+    starsDisplay: formatStarCount(stars, 1),
+    meta: describeExecutionPomodoroMeta(counts),
+  }
+})
+
+const todayLaborMetricPreview = computed(() => {
+  const laborSeconds = loadTodayLaborDurationSeconds()
+  const stars = calculateLaborMetricStars(laborSeconds)
+  return {
+    starsDisplay: formatStarCount(stars, 1),
+    meta: describeLaborMetricMeta(laborSeconds),
   }
 })
 
@@ -241,10 +299,39 @@ refresh()
       </p>
     </section>
 
+    <section v-if="showManualInputPanels" class="card labor-metric-panel">
+      <h3 class="labor-metric-panel__title">劳动力指标 · 自动计星</h3>
+      <p class="labor-metric-panel__hint">
+        当日劳动累计超过 30 分钟 +1 星，否则 −1 星。仅系统自动判定，不可手动修改。
+      </p>
+      <div class="labor-metric-panel__preview">
+        <span class="labor-metric-panel__preview-label">当前预计</span>
+        <span
+          class="labor-metric-panel__preview-stars"
+          :class="{ 'labor-metric-panel__preview-stars--penalty': todayLaborMetricPreview.starsDisplay.startsWith('−') }"
+        >
+          {{ todayLaborMetricPreview.starsDisplay }}
+        </span>
+        <span class="labor-metric-panel__preview-meta">{{ todayLaborMetricPreview.meta }}</span>
+      </div>
+    </section>
+
+    <section v-if="showManualInputPanels" class="card execution-panel">
+      <h3 class="execution-panel__title">学习执行力 · 自动计星</h3>
+      <p class="execution-panel__hint">
+        早、下、晚三段番茄均达到日程最低要求（2 / 4 / 2 轮）时 +1 星，仅系统自动判定，不可手动修改。
+      </p>
+      <div class="execution-panel__preview">
+        <span class="execution-panel__preview-label">当前预计</span>
+        <span class="execution-panel__preview-stars">{{ todayExecutionPreview.starsDisplay }}</span>
+        <span class="execution-panel__preview-meta">{{ todayExecutionPreview.meta }}</span>
+      </div>
+    </section>
+
     <section v-if="showManualInputPanels" class="card stamina-panel">
       <h3 class="stamina-panel__title">体力 · 手动调整</h3>
       <p class="stamina-panel__hint">
-        日终结算时，运动大卡 ≥{{ STAMINA_CALORIE_THRESHOLD }} 自动 +1 星。你可补充记录昨晚休息情况：
+        日终结算时，运动大卡 ≥100 自动 +1 星、≥180 +2 星，低于 100 扣 1 星。你可补充记录昨晚休息情况：
       </p>
       <div class="stamina-panel__preview">
         <span class="stamina-panel__preview-label">当前预计</span>
@@ -394,6 +481,19 @@ refresh()
         </div>
         <p class="daily-stars__rule">累计 &gt;30 分钟 +1 星，&gt;90 分钟再 +1 星</p>
 
+        <p class="daily-stars__group-title">劳动力指标</p>
+        <div class="daily-stars__row daily-stars__row--perseverance">
+          <span class="daily-stars__row-label">时长</span>
+          <span
+            class="daily-stars__row-stars"
+            :class="{ 'daily-stars__row-stars--penalty': breakdown!.laborMetricStars < 0 }"
+          >
+            {{ laborMetricStarsDisplay }}
+          </span>
+          <span class="daily-stars__row-meta">{{ laborMetricMetaDisplay }}</span>
+        </div>
+        <p class="daily-stars__rule">当日劳动超过 30 分钟 +1 星，否则 −1 星（自动计星）</p>
+
         <p class="daily-stars__group-title">锻炼（大卡）</p>
         <div class="daily-stars__row">
           <span class="daily-stars__row-label">消耗</span>
@@ -424,6 +524,16 @@ refresh()
           运动 ≥30 分钟且学习 ≥6 小时 +1 星，任一项未达标 −1 星
         </p>
 
+        <p class="daily-stars__group-title">学习执行力</p>
+        <div class="daily-stars__row daily-stars__row--perseverance">
+          <span class="daily-stars__row-label">番茄</span>
+          <span class="daily-stars__row-stars">{{ executionStarsDisplay }}</span>
+          <span class="daily-stars__row-meta">{{ executionMetaDisplay }}</span>
+        </div>
+        <p class="daily-stars__rule">
+          早 ≥2、下 ≥4、晚 ≥2 轮全部达标 +1 星（自动计星，不可手动调整）
+        </p>
+
         <p class="daily-stars__group-title">体力</p>
         <div class="daily-stars__row daily-stars__row--perseverance">
           <span class="daily-stars__row-label">合计</span>
@@ -436,7 +546,7 @@ refresh()
           <span class="daily-stars__row-meta">{{ staminaMetaDisplay }}</span>
         </div>
         <p class="daily-stars__rule">
-          大卡 ≥100 自动 +1 星；可手动 +1（休息良好）或 −1（昨晚熬夜）
+          大卡 ≥100 自动 +1 星，≥180 +2 星，低于 100 扣 1 星；可手动 +1（休息良好）或 −1（昨晚熬夜）
         </p>
 
         <p class="daily-stars__group-title">金钱消费</p>
@@ -467,10 +577,12 @@ refresh()
       <h3 class="tip-card__title">说明</h3>
       <ul class="tip-card__list">
         <li>自 6 月 30 日起统计，6 月 29 日不计入星级</li>
-        <li>当天进行中的自动计星须等 24:00 后结算；体力、洁净力、金钱可随时在上方填写</li>
+        <li>当天进行中的自动计星须等 24:00 后结算；学习执行力、体力自动项按日终数据判定</li>
+        <li>劳动力指标：当日劳动超过 30 分钟 +1 星，否则 −1 星（仅自动）</li>
+        <li>学习执行力：早 ≥2、下 ≥4、晚 ≥2 轮番茄全部达标 +1 星（仅自动）</li>
         <li>金钱：初始 {{ MONEY_BASE_BALANCE }} 元，每日 +{{ MONEY_DAILY_INCREMENT }} 元；有消费须提交</li>
         <li>洁净力：标记当日完成清洁卫生打理 +1 星</li>
-        <li>劳动 0～2 星，锻炼大卡 −1～2 星，毅力 −1～1 星，体力 −1～2 星，洁净力 0～1 星</li>
+        <li>劳动 0～2 星，劳动力指标 −1～1 星，锻炼大卡 −1～2 星，毅力 −1～1 星，学习执行力 0～1 星，体力自动 −1～2 星（可手动 ±1），洁净力 0～1 星</li>
       </ul>
     </section>
   </div>
@@ -529,6 +641,102 @@ refresh()
 
 .stamina-panel {
   padding: 18px 16px;
+}
+
+.execution-panel {
+  padding: 18px 16px;
+}
+
+.labor-metric-panel {
+  padding: 18px 16px;
+}
+
+.labor-metric-panel__title {
+  margin: 0 0 8px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.labor-metric-panel__hint {
+  margin: 0 0 14px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--color-text-secondary);
+}
+
+.labor-metric-panel__preview {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 12px;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+}
+
+.labor-metric-panel__preview-label {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.labor-metric-panel__preview-stars {
+  font-size: 18px;
+  letter-spacing: 2px;
+  color: var(--color-primary);
+}
+
+.labor-metric-panel__preview-stars--penalty {
+  color: #c62828;
+}
+
+.labor-metric-panel__preview-meta {
+  flex: 1 1 100%;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+}
+
+.execution-panel__title {
+  margin: 0 0 8px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.execution-panel__hint {
+  margin: 0 0 14px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--color-text-secondary);
+}
+
+.execution-panel__preview {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 12px;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+}
+
+.execution-panel__preview-label {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.execution-panel__preview-stars {
+  font-size: 18px;
+  letter-spacing: 2px;
+  color: var(--color-primary);
+}
+
+.execution-panel__preview-meta {
+  flex: 1 1 100%;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-text-secondary);
 }
 
 .stamina-panel__title {

@@ -1,6 +1,8 @@
 import type { DailyStarBreakdown, StaminaManualStars } from '../types/dailyStars'
 import {
+  EXECUTION_POMODORO_THRESHOLDS,
   EXERCISE_STAR_THRESHOLDS,
+  LABOR_METRIC_THRESHOLD_SECONDS,
   LABOR_STAR_THRESHOLDS_SECONDS,
   PERSEVERANCE_THRESHOLDS,
 } from '../types/dailyStars'
@@ -17,6 +19,15 @@ export function calculateLaborStars(laborSeconds: number): number {
   return stars
 }
 
+/** 劳动力指标：超过 30 分钟 +1，否则 −1 */
+export function calculateLaborMetricStars(laborSeconds: number): number {
+  return laborSeconds > LABOR_METRIC_THRESHOLD_SECONDS ? 1 : -1
+}
+
+export function describeLaborMetricMeta(laborSeconds: number): string {
+  return `累计 ${formatLaborDuration(laborSeconds)}`
+}
+
 export function calculateExerciseStars(exerciseCalories: number): number {
   if (exerciseCalories >= EXERCISE_STAR_THRESHOLDS.twoStars) return 2
   if (exerciseCalories >= EXERCISE_STAR_THRESHOLDS.oneStar) return 1
@@ -29,8 +40,16 @@ export function calculatePerseveranceStars(exerciseSeconds: number, studySeconds
   return exerciseMet && studyMet ? 1 : -1
 }
 
+/** 体力自动计星：与锻炼大卡规则一致（≥180 +2，≥100 +1，<100 −1） */
 export function calculateStaminaAutoStars(exerciseCalories: number): number {
-  return exerciseCalories >= EXERCISE_STAR_THRESHOLDS.oneStar ? 1 : 0
+  return calculateExerciseStars(exerciseCalories)
+}
+
+export function describeStaminaAutoStars(autoStars: number, prefix = '自动'): string {
+  if (autoStars === 2) return `${prefix} +2`
+  if (autoStars === 1) return `${prefix} +1`
+  if (autoStars === -1) return `${prefix} −1`
+  return ''
 }
 
 export function calculateStaminaStars(
@@ -42,6 +61,43 @@ export function calculateStaminaStars(
 
 export function calculateCleanlinessStars(maintained: boolean): number {
   return maintained ? 1 : 0
+}
+
+export function calculateExecutionStars(counts: {
+  morningCount: number
+  afternoonCount: number
+  eveningCount: number
+}): number {
+  if (
+    counts.morningCount >= EXECUTION_POMODORO_THRESHOLDS.morning &&
+    counts.afternoonCount >= EXECUTION_POMODORO_THRESHOLDS.afternoon &&
+    counts.eveningCount >= EXECUTION_POMODORO_THRESHOLDS.evening
+  ) {
+    return 1
+  }
+  return 0
+}
+
+export function describeExecutionPomodoroMeta(counts: {
+  morningCount: number
+  afternoonCount: number
+  eveningCount: number
+}): string {
+  return [
+    `早 ${counts.morningCount}/${EXECUTION_POMODORO_THRESHOLDS.morning}`,
+    `下 ${counts.afternoonCount}/${EXECUTION_POMODORO_THRESHOLDS.afternoon}`,
+    `晚 ${counts.eveningCount}/${EXECUTION_POMODORO_THRESHOLDS.evening}`,
+  ].join(' · ')
+}
+
+export function loadTodayLaborDurationSeconds(): number {
+  const record = loadTodayLaborRecord()
+  const state = loadScheduleState()
+  if (state.activity === 'labor' && state.laborSegmentStartedAt) {
+    const elapsed = Math.floor((Date.now() - state.laborSegmentStartedAt) / 1000)
+    return Math.max(record.totalSeconds, state.laborSegmentBaseSeconds + elapsed)
+  }
+  return Math.max(record.totalSeconds, state.laborSeconds ?? 0)
 }
 
 export function loadTodayExerciseDurationSeconds(): number {
@@ -72,16 +128,28 @@ export function calculateDailyStars(input: {
   exerciseCalories: number
   exerciseDurationSeconds: number
   studySeconds: number
+  morningCount?: number
+  afternoonCount?: number
+  eveningCount?: number
   manualStaminaStars?: StaminaManualStars
   cleanlinessMaintained?: boolean
   money?: MoneySpendSnapshot
 }): DailyStarBreakdown {
   const laborStars = calculateLaborStars(input.laborSeconds)
+  const laborMetricStars = calculateLaborMetricStars(input.laborSeconds)
   const exerciseStars = calculateExerciseStars(input.exerciseCalories)
   const perseveranceStars = calculatePerseveranceStars(
     input.exerciseDurationSeconds,
     input.studySeconds,
   )
+  const morningPomodoroCount = input.morningCount ?? 0
+  const afternoonPomodoroCount = input.afternoonCount ?? 0
+  const eveningPomodoroCount = input.eveningCount ?? 0
+  const executionStars = calculateExecutionStars({
+    morningCount: morningPomodoroCount,
+    afternoonCount: afternoonPomodoroCount,
+    eveningCount: eveningPomodoroCount,
+  })
   const manualStaminaStars = input.manualStaminaStars ?? 0
   const staminaAutoStars = calculateStaminaAutoStars(input.exerciseCalories)
   const staminaStars = staminaAutoStars + manualStaminaStars
@@ -97,17 +165,28 @@ export function calculateDailyStars(input: {
 
   return {
     laborStars,
+    laborMetricStars,
     exerciseStars,
     perseveranceStars,
+    executionStars,
     staminaStars,
     staminaAutoStars,
     staminaManualStars: manualStaminaStars,
     totalStars:
-      laborStars + exerciseStars + perseveranceStars + staminaStars + cleanlinessStars,
+      laborStars +
+      laborMetricStars +
+      exerciseStars +
+      perseveranceStars +
+      executionStars +
+      staminaStars +
+      cleanlinessStars,
     laborSeconds: input.laborSeconds,
     exerciseCalories: input.exerciseCalories,
     exerciseDurationSeconds: input.exerciseDurationSeconds,
     studySeconds: input.studySeconds,
+    morningPomodoroCount,
+    afternoonPomodoroCount,
+    eveningPomodoroCount,
     moneyWalletBalance: money.walletBalance,
     moneyDailyIncrement: money.dailyIncrement,
     moneySpent: money.spent,
@@ -119,13 +198,17 @@ export function calculateDailyStars(input: {
 }
 
 export function loadTodayDailyStars(): DailyStarBreakdown {
-  const labor = loadTodayLaborRecord()
   const exercise = loadTodayExerciseRecord()
+  const schedule = loadScheduleState()
+  const laborSeconds = loadTodayLaborDurationSeconds()
   return calculateDailyStars({
-    laborSeconds: labor.totalSeconds,
+    laborSeconds,
     exerciseCalories: exercise.totalCalories,
     exerciseDurationSeconds: loadTodayExerciseDurationSeconds(),
     studySeconds: loadTodayStudySeconds(),
+    morningCount: schedule.morningCount,
+    afternoonCount: schedule.afternoonCount,
+    eveningCount: schedule.eveningCount,
   })
 }
 

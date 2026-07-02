@@ -179,13 +179,23 @@ export function useTimeManagement() {
     return state.activity === 'pomodoro' && state.pomodoroPhase === 'studying'
   }
 
+  function isPomodoroLaborBreak() {
+    return (
+      state.activity === 'pomodoro' &&
+      (state.pomodoroPhase === 'resting' ||
+        state.pomodoroPhase === 'studyDone' ||
+        state.pomodoroPhase === 'restDone')
+    )
+  }
+
   function canStartLaborNow() {
     if (isForceRestTime()) return false
     return (
       state.activity === 'waiting_meal' ||
       state.activity === 'free_hour' ||
       state.activity === 'free_hour_prompt' ||
-      state.activity === 'night_rest_timer'
+      state.activity === 'night_rest_timer' ||
+      isPomodoroLaborBreak()
     )
   }
 
@@ -1290,6 +1300,14 @@ export function useTimeManagement() {
     ) {
       stopTimer()
       clearCountdownDeadline()
+    } else if (isPomodoroLaborBreak()) {
+      state.laborResumePomodoroPhase = state.pomodoroPhase
+      state.laborResumePomodoroRemaining = state.pomodoroRemaining
+      stopTimer()
+      clearCountdownDeadline()
+    } else {
+      state.laborResumePomodoroPhase = null
+      state.laborResumePomodoroRemaining = null
     }
 
     state.laborCategory = category
@@ -1344,6 +1362,21 @@ export function useTimeManagement() {
       state.laborResumeNightRestRemaining = null
       state.activity = 'night_rest_timer'
       startCountdown(onNightRestFinished)
+    } else if (resumeActivity === 'pomodoro') {
+      const phase = state.laborResumePomodoroPhase ?? 'resting'
+      const remaining = state.laborResumePomodoroRemaining ?? REST_SECONDS
+      state.laborResumePomodoroPhase = null
+      state.laborResumePomodoroRemaining = null
+      state.activity = 'pomodoro'
+      state.pomodoroPhase = phase
+      state.pomodoroRemaining = remaining
+      if (phase === 'studyDone') {
+        startCountdown(enterRest)
+      } else if (phase === 'resting') {
+        startCountdown(onRestFinished)
+      } else if (phase === 'restDone') {
+        startCountdown(startStudy)
+      }
     } else {
       state.activity = 'waiting_meal'
     }

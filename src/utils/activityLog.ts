@@ -502,6 +502,15 @@ export function loadActivityLogs(): DayLog[] {
   return logs
 }
 
+export function loadTodayStudyRecordChanges(): LogEntry[] {
+  const today = getTodayKey()
+  const dayLog = loadActivityLogs().find((item) => item.date === today)
+  if (!dayLog) return []
+  return dayLog.entries
+    .filter((entry) => entry.type === 'study_record_change')
+    .sort((a, b) => a.timestamp - b.timestamp)
+}
+
 export function getDayLogDisplaySnapshot(dayLog: DayLog): DayLogSnapshot {
   if (dayLog.snapshot) return dayLog.snapshot
 

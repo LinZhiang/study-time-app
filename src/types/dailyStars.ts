@@ -21,13 +21,27 @@ export const DAILY_STAMINA_STORAGE_KEY = 'daily-stamina-adjustment'
 
 export type StaminaManualStars = -1 | 0 | 1
 
-/** 体力：运动大卡 ≥100 自动 +1 星，可手动 ±1 星（如昨晚是否熬夜） */
+/** 体力：运动大卡 ≥100 自动 +1、≥180 +2、<100 −1；可手动 ±1 星（如昨晚是否熬夜） */
 export const STAMINA_CALORIE_THRESHOLD = EXERCISE_STAR_THRESHOLDS.oneStar
+
+/** 学习执行力：早/下/晚番茄均达日程最低要求 +1 星（仅自动，不可手动） */
+export const EXECUTION_POMODORO_THRESHOLDS = {
+  morning: 2,
+  afternoon: 4,
+  evening: 2,
+} as const
+
+/** 劳动力指标：当日劳动 >30 分钟 +1 星，否则 −1 星（仅自动，不可手动） */
+export const LABOR_METRIC_THRESHOLD_SECONDS = LABOR_STAR_THRESHOLDS_SECONDS[0]
 
 export interface DailyStarBreakdown {
   laborStars: number
+  /** 劳动力指标（自动） */
+  laborMetricStars: number
   exerciseStars: number
   perseveranceStars: number
+  /** 学习执行力（自动） */
+  executionStars: number
   staminaStars: number
   staminaAutoStars: number
   staminaManualStars: StaminaManualStars
@@ -36,6 +50,9 @@ export interface DailyStarBreakdown {
   exerciseCalories: number
   exerciseDurationSeconds: number
   studySeconds: number
+  morningPomodoroCount: number
+  afternoonPomodoroCount: number
+  eveningPomodoroCount: number
   moneyWalletBalance: number
   moneyDailyIncrement: number
   moneySpent: number

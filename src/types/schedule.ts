@@ -54,6 +54,8 @@ export interface ScheduleState {
   laborResumeFreeHourRemaining: number | null
   laborResumeFreeHourPromptShown: boolean
   laborResumeNightRestRemaining: number | null
+  laborResumePomodoroPhase: PomodoroPhase | null
+  laborResumePomodoroRemaining: number | null
   /** 当前倒计时段是否已播放「快结束」提醒（键含 deadline/段起点，防重复） */
   countdownEndingReminderKey: string | null
 }

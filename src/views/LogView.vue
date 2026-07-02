@@ -152,12 +152,20 @@ refreshLogs()
               <span class="detail-list__value">{{ formatStarCount(getSnapshot(day).stars!.laborStars) }}</span>
             </li>
             <li class="detail-list__item">
+              <span class="detail-list__label">劳动力指标</span>
+              <span class="detail-list__value">{{ formatStarCount(getSnapshot(day).stars!.laborMetricStars ?? 0, 1) }}</span>
+            </li>
+            <li class="detail-list__item">
               <span class="detail-list__label">锻炼大卡</span>
               <span class="detail-list__value">{{ formatStarCount(getSnapshot(day).stars!.exerciseStars, 2) }}</span>
             </li>
             <li class="detail-list__item">
               <span class="detail-list__label">毅力</span>
               <span class="detail-list__value">{{ formatStarCount(getSnapshot(day).stars!.perseveranceStars, 1) }}</span>
+            </li>
+            <li class="detail-list__item">
+              <span class="detail-list__label">学习执行力</span>
+              <span class="detail-list__value">{{ formatStarCount(getSnapshot(day).stars!.executionStars ?? 0, 1) }}</span>
             </li>
             <li class="detail-list__item">
               <span class="detail-list__label">体力</span>

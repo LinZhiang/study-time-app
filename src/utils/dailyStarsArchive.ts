@@ -13,7 +13,12 @@ import {
 } from '../types/dailyStars'
 import type { ScheduleState } from '../types/schedule'
 import { SCHEDULE_STORAGE_KEY } from '../types/schedule'
-import { calculateDailyStars, calculateStaminaAutoStars } from './dailyStars'
+import {
+  calculateDailyStars,
+  calculateExecutionStars,
+  calculateLaborMetricStars,
+  calculateStaminaAutoStars,
+} from './dailyStars'
 import { finalizeDayLog, finalizePausedDayLog, isDayLogFinalized } from './activityLog'
 import { createDefaultState, saveScheduleState } from './scheduleStorage'
 import { readCleanlinessForDate, resetCleanlinessForToday } from './cleanlinessRecord'
@@ -110,6 +115,9 @@ function collectTotalsForDate(date: string) {
     exerciseDurationSeconds: exercise?.date === date ? exercise.totalSeconds ?? 0 : 0,
     exerciseCalories: exercise?.date === date ? exercise.totalCalories ?? 0 : 0,
     studySeconds: schedule?.date === date ? schedule.studySeconds ?? 0 : 0,
+    morningCount: schedule?.date === date ? schedule.morningCount ?? 0 : 0,
+    afternoonCount: schedule?.date === date ? schedule.afternoonCount ?? 0 : 0,
+    eveningCount: schedule?.date === date ? schedule.eveningCount ?? 0 : 0,
   }
 }
 
@@ -130,6 +138,18 @@ function normalizeBreakdown(breakdown: DailyStarBreakdown): DailyStarBreakdown {
   const staminaAutoStars =
     breakdown.staminaAutoStars ?? calculateStaminaAutoStars(breakdown.exerciseCalories)
   const staminaStars = breakdown.staminaStars ?? staminaAutoStars + staminaManualStars
+  const morningPomodoroCount = breakdown.morningPomodoroCount ?? 0
+  const afternoonPomodoroCount = breakdown.afternoonPomodoroCount ?? 0
+  const eveningPomodoroCount = breakdown.eveningPomodoroCount ?? 0
+  const executionStars =
+    breakdown.executionStars ??
+    calculateExecutionStars({
+      morningCount: morningPomodoroCount,
+      afternoonCount: afternoonPomodoroCount,
+      eveningCount: eveningPomodoroCount,
+    })
+  const laborMetricStars =
+    breakdown.laborMetricStars ?? calculateLaborMetricStars(breakdown.laborSeconds ?? 0)
   const moneyWalletBalance = breakdown.moneyWalletBalance ?? 0
   const moneyDailyIncrement = breakdown.moneyDailyIncrement ?? 50
   const moneySpent = breakdown.moneySpent ?? 0
@@ -142,6 +162,11 @@ function normalizeBreakdown(breakdown: DailyStarBreakdown): DailyStarBreakdown {
     staminaManualStars,
     staminaAutoStars,
     staminaStars,
+    morningPomodoroCount,
+    afternoonPomodoroCount,
+    eveningPomodoroCount,
+    executionStars,
+    laborMetricStars,
     moneyWalletBalance,
     moneyDailyIncrement,
     moneySpent,
@@ -151,8 +176,10 @@ function normalizeBreakdown(breakdown: DailyStarBreakdown): DailyStarBreakdown {
     cleanlinessStars,
     totalStars:
       breakdown.laborStars +
+      laborMetricStars +
       breakdown.exerciseStars +
       breakdown.perseveranceStars +
+      executionStars +
       staminaStars +
       cleanlinessStars,
   }

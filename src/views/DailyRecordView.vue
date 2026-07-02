@@ -2,6 +2,8 @@
 import { computed, onActivated, ref } from 'vue'
 import { PERIOD_LABELS } from '../types/schedule'
 import { LABOR_CATEGORY_LABELS } from '../types/labor'
+import { loadTodayStudyRecordChanges } from '../utils/activityLog'
+import { formatStudyDuration, loadTodayStudySeconds } from '../utils/dailyStars'
 import {
   formatExerciseCalories,
   formatExerciseClock,
@@ -13,13 +15,18 @@ import {
   formatLaborDuration,
   loadTodayLaborRecord,
 } from '../utils/laborRecord'
+import { countStudyRecordStats, loadStudyRecord } from '../utils/studyRecord'
 
 const laborRecord = ref(loadTodayLaborRecord())
 const exerciseRecord = ref(loadTodayExerciseRecord())
+const studyRecordChanges = ref(loadTodayStudyRecordChanges())
+const studyStats = ref(countStudyRecordStats(loadStudyRecord()))
 
 function refresh() {
   laborRecord.value = loadTodayLaborRecord()
   exerciseRecord.value = loadTodayExerciseRecord()
+  studyRecordChanges.value = loadTodayStudyRecordChanges()
+  studyStats.value = countStudyRecordStats(loadStudyRecord())
 }
 
 const laborTotalDisplay = computed(() => formatLaborDuration(laborRecord.value.totalSeconds))
@@ -29,6 +36,7 @@ const exerciseTotalDisplay = computed(() =>
 const exerciseCaloriesDisplay = computed(() =>
   formatExerciseCalories(exerciseRecord.value.totalCalories),
 )
+const studyTotalDisplay = computed(() => formatStudyDuration(loadTodayStudySeconds()))
 
 function formatEntryTime(timestamp: number) {
   const date = new Date(timestamp)
@@ -55,6 +63,12 @@ refresh()
         <p class="summary-card__calories">{{ exerciseCaloriesDisplay }}</p>
         <p class="summary-card__hint">自由 1 小时内的锻炼；结束时会记录卡路里；次日 0 点清零</p>
       </div>
+      <div class="card summary-card summary-card--study">
+        <p class="summary-card__subtitle">今日学习时长</p>
+        <p class="summary-card__value">{{ studyTotalDisplay }}</p>
+        <p class="summary-card__calories">累计 {{ studyStats.totalStars }} 星 · {{ studyStats.majorCount }} 大类</p>
+        <p class="summary-card__hint">番茄学习累计时长；星级在「学习记录」页维护</p>
+      </div>
     </section>
 
     <section class="section-block">
@@ -64,7 +78,7 @@ refresh()
       </div>
 
       <p v-if="laborRecord.entries.length === 0" class="empty-hint">
-        暂无记录。在中午用餐/自由时间、晚上休息或自由时间中，点击「进行劳动」开始记录。
+        暂无记录。在番茄休息/用餐、自由 1 小时或晚上休息 30 分钟中，点击「进行劳动」开始记录。
       </p>
 
       <ul v-else class="entry-list">
@@ -108,11 +122,35 @@ refresh()
       </ul>
     </section>
 
+    <section class="section-block">
+      <div class="section-block__header">
+        <h2 class="section-block__title">学习记录</h2>
+        <span class="section-block__meta">今日 {{ studyRecordChanges.length }} 项变更</span>
+      </div>
+
+      <p v-if="studyRecordChanges.length === 0" class="empty-hint">
+        今日暂无星级变更。在「学习记录」页调整各科目星星后，变更会显示在这里。
+      </p>
+
+      <ul v-else class="entry-list">
+        <li v-for="entry in studyRecordChanges" :key="entry.id" class="entry-item">
+          <div class="entry-item__main">
+            <span class="entry-item__category">学习进度</span>
+            <span class="entry-item__duration">{{ entry.time }}</span>
+          </div>
+          <div class="entry-item__meta entry-item__meta--study">
+            <span>{{ entry.label }}</span>
+          </div>
+        </li>
+      </ul>
+    </section>
+
     <section class="card tip-card">
       <h3 class="tip-card__title">可记录时段</h3>
       <ul class="tip-card__list">
-        <li>劳动力：中午用餐/自由 1 小时，晚上自由 1 小时或休息 30 分钟</li>
+        <li>劳动力：番茄休息/用餐、中午或晚上自由 1 小时、晚上休息 30 分钟</li>
         <li>锻炼：中午或晚上自由 1 小时内</li>
+        <li>学习：番茄学习时长自动累计；科目星级在「学习记录」页维护</li>
       </ul>
     </section>
   </div>
@@ -162,6 +200,12 @@ refresh()
   }
 }
 
+@media (min-width: 960px) {
+  .summary-row {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
 .summary-card {
   padding: 20px;
   text-align: center;
@@ -169,6 +213,10 @@ refresh()
 
 .summary-card--exercise .summary-card__value {
   color: var(--color-success, #2e7d32);
+}
+
+.summary-card--study .summary-card__value {
+  color: var(--color-accent, #6a4c93);
 }
 
 .summary-card__subtitle {
@@ -189,6 +237,10 @@ refresh()
   font-size: 18px;
   font-weight: 600;
   color: var(--color-success, #2e7d32);
+}
+
+.summary-card--study .summary-card__calories {
+  color: var(--color-accent, #6a4c93);
 }
 
 .summary-card__hint {
@@ -289,6 +341,11 @@ refresh()
   gap: 8px;
   font-size: 12px;
   color: var(--color-text-secondary);
+}
+
+.entry-item__meta--study {
+  display: block;
+  line-height: 1.5;
 }
 
 .tip-card {

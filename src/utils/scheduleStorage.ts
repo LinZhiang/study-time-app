@@ -72,6 +72,8 @@ export function createDefaultState(): ScheduleState {
     laborResumeFreeHourRemaining: null,
     laborResumeFreeHourPromptShown: false,
     laborResumeNightRestRemaining: null,
+    laborResumePomodoroPhase: null,
+    laborResumePomodoroRemaining: null,
     countdownEndingReminderKey: null,
   }
 }
@@ -104,6 +106,8 @@ export function loadScheduleState(): ScheduleState {
       laborResumeFreeHourRemaining: data.laborResumeFreeHourRemaining ?? null,
       laborResumeFreeHourPromptShown: data.laborResumeFreeHourPromptShown ?? false,
       laborResumeNightRestRemaining: data.laborResumeNightRestRemaining ?? null,
+      laborResumePomodoroPhase: data.laborResumePomodoroPhase ?? null,
+      laborResumePomodoroRemaining: data.laborResumePomodoroRemaining ?? null,
       laborSeconds: data.laborSeconds ?? 0,
       studySeconds: data.studySeconds ?? 0,
       countdownEndingReminderKey: data.countdownEndingReminderKey ?? null,
